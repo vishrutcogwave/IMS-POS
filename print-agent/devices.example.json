@@ -1,0 +1,4 @@
+{
+  "kitchen": { "type": "tcp", "host": "192.168.1.50", "port": 9100 },
+  "receipt": { "type": "windows", "name": "<installed-Windows-printer-name>" }
+}

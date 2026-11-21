@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DB_URL: ${DB_URL:?Set the production PostgreSQL URL}
+      DB_USERNAME: ${DB_USERNAME:?Set the restricted database role}
+      DB_PASSWORD: ${DB_PASSWORD:?Set the database password}
+      DB_MIGRATION_USERNAME: ${DB_MIGRATION_USERNAME:?Set the migration role}
+      DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD:?Set the migration password}
+      APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS origin}
+      APP_ONBOARDING_KEY: ${APP_ONBOARDING_KEY:-}
+      APP_COOKIE_SECURE: "true"
+      APP_SEED_DEMO: "false"
+      APP_DOCS_ENABLED: "false"
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8081:80"

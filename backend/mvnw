@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+BASE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+MAVEN="$BASE/../.tools/apache-maven-3.9.9/bin/mvn"
+if [ -x "$MAVEN" ]; then
+  exec "$MAVEN" -Dmaven.repo.local="$BASE/../.tools/m2" -f "$BASE/pom.xml" "$@"
+fi
+if command -v mvn >/dev/null 2>&1; then
+  exec mvn -f "$BASE/pom.xml" "$@"
+fi
+printf '%s\n' 'Install Maven 3.9+ or place Apache Maven 3.9.9 under .tools/apache-maven-3.9.9.' >&2
+exit 1

@@ -1,0 +1,52 @@
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: none
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+  tomcat:
+    max-http-form-post-size: 1MB
+    max-swallow-size: 1MB
+spring:
+  application:
+    name: hearth-table
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 10000
+  flyway:
+    enabled: true
+    url: ${DB_URL}
+    user: ${DB_MIGRATION_USERNAME:${DB_USERNAME}}
+    password: ${DB_MIGRATION_PASSWORD:${DB_PASSWORD}}
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      fail-on-trailing-tokens: true
+      use-big-decimal-for-floats: true
+  mvc:
+    log-request-details: false
+  servlet:
+    multipart:
+      enabled: false
+app:
+  origin: ${APP_ORIGIN:http://localhost:5173}
+  cookie-secure: ${APP_COOKIE_SECURE:true}
+  session-idle-minutes: ${APP_SESSION_IDLE_MINUTES:30}
+  onboarding-key: ${APP_ONBOARDING_KEY:}
+  api-docs-enabled: ${APP_API_DOCS_ENABLED:${APP_DOCS_ENABLED:false}}
+  seed-demo: ${APP_SEED_DEMO:false}
+  demo-password: ${DEMO_PASSWORD:}
+springdoc:
+  api-docs:
+    enabled: ${APP_API_DOCS_ENABLED:${APP_DOCS_ENABLED:false}}
+  swagger-ui:
+    enabled: ${APP_API_DOCS_ENABLED:${APP_DOCS_ENABLED:false}}
+logging:
+  level:
+    org.springframework.security: WARN
+    org.springframework.jdbc.core: WARN
