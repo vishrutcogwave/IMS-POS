@@ -30,7 +30,7 @@ mvn -f backend/pom.xml clean package
 node scripts/start-backend.mjs
 ```
 
-On this prepared workstation, project-local Maven is also available through `bash backend/mvnw clean package` (Git Bash) or `backend\mvnw.cmd clean package` (Command Prompt). These are lightweight launchers, not a downloading Maven wrapper; if `.tools` is absent, install Maven normally. The backend starter reads the root `.env` and does not print secrets.
+Set JAVA_HOME to Java 21 and put its bin directory first on PATH before invoking Maven or the backend starter. On this workstation the verified Java 21 distribution is under .tools. Maven 3.9 is required on PATH for a normal checkout. Local Maven launchers also support an optional .tools/apache-maven-3.9.9 installation.
 
 In a second terminal:
 
@@ -59,11 +59,11 @@ npm install
 node scripts/local-postgres.mjs
 ```
 
-It creates `.local/postgres`, binds loopback, uses SCRAM passwords and starts no Windows service. It creates a separate runtime role. Do not run it alongside Docker on the same port. The portable binary distribution is a development convenience, not the production deployment package. On a fresh machine, prefer Docker or a supported PostgreSQL installation.
+It creates `.local/postgres` on the loopback port specified by DB_URL (55432 in this workstation setup), binds loopback, uses SCRAM passwords and starts no Windows service. It creates a separate runtime role. Do not run it alongside Docker on the same port. The portable binary distribution is a development convenience, not the production deployment package. On a fresh machine, prefer Docker or a supported PostgreSQL installation.
 
 ### Existing corporate/system certificate trust
 
-The system's older Node/Java trust bundles may not include the Windows root used on this network. Do not disable SSL verification. The prepared `.tools/node-v24.11.1-win-x64` runtime can use existing Windows trusted roots:
+If the network uses a managed root certificate, configure npm and Maven to use that trusted certificate. The optional Windows Node launcher below requires a Node installation in .tools/node-v24.11.1-win-x64.
 
 ```sh
 node scripts/npm-local.mjs install
