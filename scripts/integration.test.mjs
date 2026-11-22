@@ -829,13 +829,17 @@ test('Platform administrator controls access and audits subscriptions without te
   assert.equal((await request(other, '/platform/tenants')).status, 401);
   assert.equal((await request(null, '/auth/me', undefined, 'GET', authorization)).status, 401);
   const tenant = { businessName: 'Platform test ' + suffix, slug: 'platform-' + suffix,
-    name: 'Test owner', email: 'owner-' + suffix + '@example.test', password, maxBranches: 1, maxUsers: 1 };
+    name: 'Test owner', email: 'owner-' + suffix + '@example.test', password, maxBranches: 1, maxUsers: 1,
+    startsOn: '2020-01-01', endsOn: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10) };
   const invalid = await request(null, '/platform/tenants', { ...tenant, slug: '-bad', name: ' ', password: 'short' }, 'POST', authorization);
   assert.equal(invalid.status, 400);
   assert.ok(invalid.data.fieldErrors.slug);
   assert.ok(invalid.data.fieldErrors.name);
   assert.ok(invalid.data.fieldErrors.password);
   assert.ok(!JSON.stringify(invalid.data).includes('short'));
+  const badDates = await request(null, '/platform/tenants', { ...tenant, endsOn: '2019-12-31' }, 'POST', authorization);
+  assert.equal(badDates.status, 422);
+  assert.ok(badDates.data.fieldErrors.endsOn);
   await ok(null, '/platform/tenants', tenant, 'POST', authorization);
   const duplicate = await request(null, '/platform/tenants', tenant, 'POST', authorization);
   assert.equal(duplicate.status, 409);
@@ -847,6 +851,8 @@ test('Platform administrator controls access and audits subscriptions without te
   assert.equal(createdStore.max_branches, 1);
   assert.equal(createdStore.max_users, 1);
   assert.equal(createdStore.is_demo, false);
+  assert.equal(createdStore.starts_on, tenant.startsOn);
+  assert.equal(createdStore.expires_at, new Date(Date.parse(tenant.endsOn) + 86400000).toISOString().replace('.000Z', 'Z'));
   assert.ok(all.some(row => row.slug === 'saffron' && row.is_demo));
   assert.equal((await request(customer, '/settings/branches', { name: 'Over quota', address: '' })).status, 422);
   const extraUser = { name: 'Quota check user', email: 'quota-' + suffix + '@example.test', password,
@@ -861,9 +867,26 @@ test('Platform administrator controls access and audits subscriptions without te
   assert.equal((await request(other, '/auth/me')).status, 200);
   await ok(null, path, { plan: 'Starter', status: 'ACTIVE', expiresAt: '2020-01-01T00:00:00Z', reason: 'Test expiry' }, 'PUT', authorization);
   assert.equal((await request(customer, '/auth/me')).status, 403);
-  await ok(null, path, { plan: 'Pro', status: 'ACTIVE', maxBranches: 1, maxUsers: 2, reason: 'Test reactivation' }, 'PUT', authorization);
+  const db = new pg.Client({ host: databaseUrl.hostname, port: Number(databaseUrl.port || 5432), database: databaseUrl.pathname.slice(1), user: env.DB_USERNAME, password: env.DB_PASSWORD });
+  await db.connect();
+  const contact = await ok(null, '/platform/contact', undefined, 'GET', authorization);
+  const testContact = { email: contact.email || 'support@example.test', phone: contact.phone || '+10000000000' };
+  try {
+    await db.query('update platform_contact set email=$1, phone=$2 where singleton', [testContact.email, testContact.phone]);
+    const expired = await request(null, '/auth/login', { tenantSlug: tenant.slug, email: tenant.email, password });
+    assert.equal(expired.status, 403);
+    assert.match(expired.data.message, /licence expired/i);
+    assert.ok(expired.data.message.includes(testContact.email));
+    assert.ok(expired.data.message.includes(testContact.phone));
+  } finally {
+    await db.query('update platform_contact set email=$1, phone=$2 where singleton and email=$3 and phone=$4',
+      [contact.email, contact.phone, testContact.email, testContact.phone]);
+    await db.end();
+  }
+  await ok(null, path, { plan: 'Pro', status: 'ACTIVE', maxBranches: 2, maxUsers: 2, reason: 'Test reactivation' }, 'PUT', authorization);
   const reactivated = await login(tenant.slug, tenant.email, password);
-  assert.equal((await request(reactivated, '/settings/branches', { name: 'Extra branch', address: '' })).status, 422);
+  await ok(reactivated, '/settings/branches', { name: 'Extra branch', address: '' });
+  assert.equal((await request(reactivated, '/settings/branches', { name: 'Over the new quota', address: '' })).status, 422);
   const history = await ok(null, path + '/history', undefined, 'GET', authorization);
   assert.deepEqual(history.map(event => event.reason), ['Test reactivation', 'Test expiry', 'Test suspension']);
   assert.equal(history[0].operator_email, platformLogin.email);
@@ -878,7 +901,7 @@ test('Platform administrator controls access and audits subscriptions without te
   await ok(null, path + '/profile', { name: tenant.businessName, address: 'Test address', phone: '12345', taxNumber: 'TEST' }, 'PUT', authorization);
   const profile = await ok(null, path + '/profile', undefined, 'GET', authorization);
   assert.equal(profile.address, 'Test address');
-  assert.equal(profile.branch_count, 1);
+  assert.equal(profile.branch_count, 2);
   const newUsername = 'updated-' + suffix + '@example.test';
   await ok(null, accountPath, { username: newUsername, reason: 'Updated username' }, 'PUT', authorization);
   assert.equal((await request(reactivated, '/auth/me')).status, 401);
@@ -892,11 +915,39 @@ test('Platform administrator controls access and audits subscriptions without te
   const accountAudit = await ok(null, '/platform/audit?tenant=' + id + '&subject=' + accounts[0].id, undefined, 'GET', authorization);
   assert.deepEqual(accountAudit.map(event => event.action), ['ACCOUNT_PASSWORD_RESET', 'ACCOUNT_USERNAME']);
   assert.ok(!JSON.stringify(accountAudit).includes(reset.temporaryPassword));
-  const contact = await ok(null, '/platform/contact', undefined, 'GET', authorization);
-  if (!contact.email) {
-    await ok(null, '/platform/contact', { email: 'support@example.test', phone: '+10000000000' }, 'PUT', authorization);
-    assert.equal((await ok(null, '/platform/contact', undefined, 'GET', authorization)).email, 'support@example.test');
-  }
+  const outletId = resetOwner.data.outlets[0].id;
+  const category = await ok(resetOwner, '/settings/categories', { outletId, name: 'Test food', department: 'KOT', sortOrder: 0 });
+  const item = await ok(resetOwner, '/settings/items', { outletId, categoryId: category.id, name: 'Test snack', description: '',
+    price: 50, taxRate: 0, available: true, vegetarian: true, variants: [], modifiers: [] });
+  const table = await ok(resetOwner, '/settings/tables', { outletId, name: 'T1', seats: 4 });
+  const { code } = await ok(resetOwner, '/print-device/branches/' + resetOwner.data.outlets[0].branch_id + '/pairing', {});
+  await ok(null, '/print-device/pair', { code }, 'POST', { Authorization: 'Bearer ' + code });
+  let order = await ok(resetOwner, '/orders', { outletId, serviceMode: 'DINE_IN', tableId: table.id, covers: 2 });
+  order = await ok(resetOwner, '/orders/' + order.id + '/items', { version: order.version, menuItemId: item.id, quantity: 1 });
+  order = await ok(resetOwner, '/orders/' + order.id + '/send', { version: order.version });
+  order = await ok(resetOwner, '/orders/' + order.id + '/bills', { version: order.version });
+  assert.ok(order.kots.length && order.bills.length);
+  assert.equal((await request(resetOwner, path, { confirmSlug: tenant.slug }, 'DELETE')).status, 401);
+  assert.equal((await request(null, path, { confirmSlug: 'coastal' }, 'DELETE', authorization)).status, 422);
+  assert.equal((await request(resetOwner, '/orders/' + order.id)).status, 200);
+  assert.deepEqual(await ok(null, path, { confirmSlug: tenant.slug }, 'DELETE', authorization), { deleted: true });
+  assert.equal((await request(null, path, { confirmSlug: tenant.slug }, 'DELETE', authorization)).status, 404);
+  assert.equal((await request(resetOwner, '/auth/me')).status, 401);
+  assert.equal((await request(null, '/auth/login', { tenantSlug: tenant.slug, email: newUsername, password: reset.temporaryPassword })).status, 401);
+  assert.equal((await request(other, '/auth/me')).status, 200);
+  assert.ok(!(await ok(null, '/platform/tenants', undefined, 'GET', authorization)).some(row => row.id === id));
+  const verificationDb = new pg.Client({ host: databaseUrl.hostname, port: Number(databaseUrl.port || 5432), database: databaseUrl.pathname.slice(1), user: env.DB_USERNAME, password: env.DB_PASSWORD });
+  await verificationDb.connect();
+  try {
+    await verificationDb.query('begin');
+    await verificationDb.query("select set_config('app.tenant_id',$1,true)", [id]);
+    const { rows } = await verificationDb.query("select quote_ident(table_name) as name from information_schema.columns where table_schema='public' and column_name='tenant_id'");
+    assert.ok(rows.length > 20);
+    for (const { name } of rows) {
+      assert.equal((await verificationDb.query(`select 1 from ${name} where tenant_id=$1 limit 1`, [id])).rowCount, 0, name);
+    }
+    await verificationDb.query('rollback');
+  } finally { await verificationDb.end(); }
   await ok(null, '/platform/logout', {}, 'POST', authorization);
   assert.equal((await request(null, '/platform/tenants', undefined, 'GET', authorization)).status, 401);
 });

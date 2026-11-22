@@ -47,7 +47,9 @@ public class PlatformController {
             @NotBlank @Email @Size(max=254) String email,
             @NotBlank @Size(min=12,max=72) String password,
             @jakarta.validation.constraints.NotNull @Min(1) @Max(1000) Integer maxBranches,
-            @jakarta.validation.constraints.NotNull @Min(1) @Max(10000) Integer maxUsers) {}
+            @jakarta.validation.constraints.NotNull @Min(1) @Max(10000) Integer maxUsers,
+            LocalDate startsOn, LocalDate endsOn) {}
+    record DeleteRestaurant(@NotBlank @Size(max=64) String confirmSlug) {}
     record Subscription(@NotBlank @Size(max = 80) String plan,
                         @NotBlank @Pattern(regexp = "ACTIVE|TRIAL|SUSPENDED") String status,
                         LocalDate startsOn,
@@ -79,8 +81,13 @@ public class PlatformController {
     Map<String, Object> provision(@RequestHeader(value = "Authorization", required = false) String authorization,
                                   @Valid @RequestBody Provision input) {
         session(authorization);
+        if (input.startsOn() != null && input.endsOn() != null && input.endsOn().isBefore(input.startsOn())) {
+            throw new ApiException(422, "Check the subscription dates.",
+                    Map.of("endsOn", "The end date must be on or after the start date."));
+        }
+        Instant expiry = input.endsOn() == null ? null : input.endsOn().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
         var owner = new AuthDtos.Onboard(input.businessName(),input.slug(),input.name(),input.email(),input.password());
-        return Map.of("id", auth.provision(owner,input.maxBranches(),input.maxUsers()), "slug", input.slug());
+        return Map.of("id", auth.provision(owner, input.maxBranches(), input.maxUsers(), input.startsOn(), expiry), "slug", input.slug());
     }
 
     @GetMapping("/tenants")
@@ -90,12 +97,37 @@ public class PlatformController {
             select id, slug, name, subscription_plan as plan, subscription_status as status,
                    subscription_expires_at as expires_at, subscription_starts_on as starts_on,
                    subscription_max_branches as max_branches, subscription_max_users as max_users, is_demo,
-                   case when subscription_status='SUSPENDED' then 'SUSPENDED'
-                        when subscription_expires_at<=now() then 'EXPIRED'
+                   case when subscription_expires_at<=now() then 'EXPIRED'
+                        when subscription_status='SUSPENDED' then 'SUSPENDED'
                         when subscription_starts_on>(now() at time zone 'UTC')::date then 'SCHEDULED'
                         else subscription_status end as access_status
             from tenants order by name, id
             """);
+    }
+
+    @DeleteMapping("/tenants/{id}")
+    Map<String, Boolean> delete(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                @PathVariable UUID id, @Valid @RequestBody DeleteRestaurant input) {
+        session(authorization);
+        return db.asTenant(id, () -> {
+            var restaurant = db.one("select slug from tenants where id=? for update", id);
+            if (!restaurant.get("slug").equals(input.confirmSlug())) {
+                throw new ApiException(422, "The Property ID does not match.",
+                        Map.of("confirmSlug", "Enter the exact Property ID shown in the confirmation."));
+            }
+            // Delete dependents before their parents, under the restaurant's row security context.
+            for (String table : List.of(
+                    "platform_audit", "platform_subscription_history", "print_jobs", "print_pc_pairings", "print_pcs",
+                    "audit_log", "request_keys", "payments", "bill_items", "bills", "kot_items", "kots",
+                    "order_items", "orders", "category_routes", "printers", "restaurant_tables",
+                    "menu_items", "categories", "menu_groups", "menu_units", "menu_taxes",
+                    "nc_departments", "stewards", "document_counters", "branch_bill_counters",
+                    "branch_printer_settings", "user_outlets", "auth_sessions", "users", "outlets", "branches")) {
+                db.update("delete from " + table + " where tenant_id=?", id);
+            }
+            db.update("delete from tenants where id=?", id);
+            return Map.of("deleted", true);
+        });
     }
 
     @GetMapping("/tenants/{id}/history")

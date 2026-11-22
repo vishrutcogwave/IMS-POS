@@ -7,6 +7,7 @@ import java.security.SecureRandom;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -106,12 +107,21 @@ public class AuthService {
     }
 
     private void requireSubscription(UUID tenant) {
-        if (!db.list("""
-                select id from tenants where id=? and
-                (subscription_status='SUSPENDED' or subscription_expires_at<=now()
-                 or subscription_starts_on>(now() at time zone 'UTC')::date)
-                """, tenant).isEmpty()) {
-            throw new ApiException(403, "This restaurant subscription is currently unavailable. Contact your platform administrator.");
+        var blocked = db.list("""
+                select case when t.subscription_expires_at<=now() then 'Restaurant licence expired.'
+                            when t.subscription_status='SUSPENDED' then 'Restaurant access is deactivated.'
+                            else 'The restaurant subscription has not started yet.' end as message,
+                       c.email, c.phone
+                from tenants t left join platform_contact c on c.singleton
+                where t.id=? and (t.subscription_expires_at<=now() or t.subscription_status='SUSPENDED'
+                   or t.subscription_starts_on>(now() at time zone 'UTC')::date)
+                """, tenant);
+        if (!blocked.isEmpty()) {
+            var notice = blocked.getFirst();
+            StringBuilder message = new StringBuilder(notice.get("message") + " Contact the platform administrator.");
+            if (notice.get("email") instanceof String email && !email.isBlank()) message.append(" Email ").append(email).append('.');
+            if (notice.get("phone") instanceof String phone && !phone.isBlank()) message.append(" Phone ").append(phone).append('.');
+            throw new ApiException(403, message.toString());
         }
     }
 
@@ -164,10 +174,10 @@ public class AuthService {
 
     /** Internal bootstrap, deliberately not exposed as an unauthenticated tenant switch. */
     UUID provision(AuthDtos.Onboard input) {
-        return provision(input, null, null);
+        return provision(input, null, null, null, null);
     }
 
-    UUID provision(AuthDtos.Onboard input, Integer maxBranches, Integer maxUsers) {
+    UUID provision(AuthDtos.Onboard input, Integer maxBranches, Integer maxUsers, LocalDate startsOn, Instant expiresAt) {
         if (!passwordLength(input.password(), 12)) {
             throw new ApiException(400, "Check the password and try again.",
                     Map.of("password", "Use at least 12 characters and no more than 72 UTF-8 bytes. Accented letters and emoji may use several bytes."));
@@ -175,8 +185,9 @@ public class AuthService {
         UUID tenant = UUID.randomUUID(), owner = UUID.randomUUID(), branch = UUID.randomUUID(), outlet = UUID.randomUUID();
         String passwordHash = passwords.encode(input.password());
         return db.asTenant(tenant, () -> {
-            if (db.update("insert into tenants(id,slug,name,subscription_max_branches,subscription_max_users) values (?,?,?,?,?) on conflict (slug) do nothing",
-                    tenant, input.slug(), input.businessName().strip(), maxBranches, maxUsers) == 0) {
+            if (db.update("insert into tenants(id,slug,name,subscription_max_branches,subscription_max_users,subscription_starts_on,subscription_expires_at) values (?,?,?,?,?,?,?) on conflict (slug) do nothing",
+                    tenant, input.slug(), input.businessName().strip(), maxBranches, maxUsers, startsOn,
+                    expiresAt == null ? null : Timestamp.from(expiresAt)) == 0) {
                 throw new ApiException(409, "This Property ID is already in use.",
                         Map.of("slug", "Choose a different Property ID."));
             }

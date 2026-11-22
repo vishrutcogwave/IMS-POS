@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ClipboardList, LogOut, Store, UserRoundCog } from 'lucide-react';
-import { Button, Field, ValidationIssues } from './ui';
+import { Button, Field, Modal, ValidationIssues } from './ui';
 import { ApiError } from './api';
 import { Brand } from './Brand';
 import { Accounts, Audit, PlatformContact, PropertyDetails, type Property } from './PlatformOperations';
@@ -49,6 +49,8 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
   const [creating, setCreating] = useState(false);
   const [page, setPage] = useState<'stores' | 'accounts' | 'audit'>('stores');
   const [details, setDetails] = useState<Property>();
+  const [deleting, setDeleting] = useState<Subscription>();
+  const [confirmation, setConfirmation] = useState('');
   const [contact, setContact] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [samplesOnly, setSamplesOnly] = useState(false);
@@ -79,6 +81,19 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
       setRestaurants(await platformRequest<Subscription[]>('/tenants', token));
       setCreating(false);
       setMessage('Restaurant created.');
+    });
+  }
+
+  function deleteRestaurant(event: FormEvent<HTMLFormElement>, restaurant: Subscription) {
+    event.preventDefault();
+    if (confirmation !== restaurant.slug || busy) return;
+    void run(async () => {
+      await platformRequest('/tenants/' + restaurant.id, token, 'DELETE', { confirmSlug: confirmation });
+      setRestaurants(current => current.filter(item => item.id !== restaurant.id));
+      if (selected?.id === restaurant.id) setSelected(undefined);
+      if (details?.id === restaurant.id) setDetails(undefined);
+      setDeleting(undefined);
+      setMessage(restaurant.name + ' was permanently deleted.');
     });
   }
 
@@ -140,12 +155,26 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
         <div><div className="eyebrow">Platform administration</div><h1>{tabs.find(tab => tab.id === page)?.label}</h1></div>
         {page === 'stores' && <Button className="secondary" onClick={() => setContact(true)}>Platform contact</Button>}
       </header>
-    {error && <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /></div></div>}
+    {error && !deleting && <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /></div></div>}
     {message && <p className="notice success" role="status">{message}</p>}
     {page === 'accounts' && <Accounts properties={restaurants} token={token} />}
     {page === 'audit' && <Audit properties={restaurants} token={token} />}
     {contact && <PlatformContact token={token} onClose={() => setContact(false)} />}
     {details && <PropertyDetails property={details} token={token} onClose={() => setDetails(undefined)} onSaved={refresh} />}
+    {deleting && <Modal title="Permanently delete restaurant?" onClose={() => setDeleting(undefined)} noClose={busy}>
+      <form onSubmit={event => deleteRestaurant(event, deleting)}>
+        <p>This deletes {deleting.name} and all of its data, including branches, users, orders, bills, and print jobs. This action cannot be undone.</p>
+        <Field label="Confirm Property ID" hint={`Type ${deleting.slug} to confirm.`}>
+          <input value={confirmation} onChange={event => setConfirmation(event.target.value)}
+            required autoComplete="off" disabled={busy} />
+        </Field>
+        {error && <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /></div></div>}
+        <div className="modal-actions">
+          <Button type="button" className="subtle" disabled={busy} onClick={() => setDeleting(undefined)}>Keep restaurant</Button>
+          <Button className="danger" busy={busy} disabled={confirmation !== deleting.slug}>Delete permanently</Button>
+        </div>
+      </form>
+    </Modal>}
     {page === 'stores' && <>
       <div className="platform-metrics">
         <div className="card"><span>Registered stores</span><strong>{restaurants.length}</strong></div>
@@ -173,6 +202,14 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
               <input name="maxUsers" type="number" min={1} max={10000} step={1} required />
             </Field>
           </div>
+          <div className="form-grid">
+            <Field label="Subscription start date (UTC)" error={error instanceof ApiError ? error.fieldErrors.startsOn : undefined}>
+              <input name="startsOn" type="date" required />
+            </Field>
+            <Field label="Subscription end date (UTC)" hint="Access is available through the end of this date." error={error instanceof ApiError ? error.fieldErrors.endsOn : undefined}>
+              <input name="endsOn" type="date" required />
+            </Field>
+          </div>
           <Button busy={busy}>Create restaurant</Button>
           <div className="section-divider" />
         </form>}
@@ -185,11 +222,13 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
           </select></Field>
         </div>
         <div className="table-scroll"><table className="data-table">
-          <thead><tr><th>Restaurant</th><th>Plan</th><th>Access</th><th>Limits</th><th>Expires</th><th>Action</th></tr></thead>
+          <thead><tr><th>Restaurant</th><th>Plan</th><th>Access</th><th>Limits</th><th>Subscription dates</th><th>Action</th></tr></thead>
           <tbody>{visible.slice(currentPage * 10, (currentPage + 1) * 10).map(row => <tr key={row.id}>
             <td><strong>{row.name}</strong><small>{row.slug}{row.is_demo ? ' · Sample' : ''}</small></td><td>{row.plan}</td>
-            <td>{row.access_status}</td><td>Branches: {row.max_branches ?? 'Unlimited'}<br />Users: {row.max_users ?? 'Unlimited'}</td><td>{row.expires_at ? new Date(row.expires_at).toLocaleString() : 'No expiry'}</td>
-            <td className="platform-row-actions"><Button className="secondary" disabled={busy} onClick={() => show(row)}>Subscription</Button><Button className="subtle" disabled={busy} onClick={() => setDetails(row)}>Details</Button></td>
+            <td>{row.access_status}</td><td>Branches: {row.max_branches ?? 'Unlimited'}<br />Users: {row.max_users ?? 'Unlimited'}</td><td><div>{row.starts_on ? 'Starts ' + row.starts_on : 'No start date'}</div>
+              <div>{row.expires_at ? 'Expires ' + row.expires_at.slice(0, 16).replace('T', ' ') + ' UTC' : 'No expiry'}</div></td>
+            <td className="platform-row-actions"><Button className="secondary" disabled={busy} onClick={() => show(row)}>Subscription</Button><Button className="subtle" disabled={busy} onClick={() => setDetails(row)}>Details</Button>
+              <Button className="subtle" disabled={busy} onClick={() => { setError(undefined); setConfirmation(''); setDeleting(row); }}>Delete</Button></td>
           </tr>)}</tbody>
         </table></div>
         {pages > 1 && <div className="pagination">
@@ -206,7 +245,7 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
           <div className="form-grid">
             <Field label="Plan"><input name="plan" defaultValue={selected.plan} required maxLength={80} /></Field>
             <Field label="Status"><select name="status" defaultValue={selected.status}>
-              <option value="ACTIVE">Active</option><option value="TRIAL">Trial</option><option value="SUSPENDED">Suspended</option>
+              <option value="ACTIVE">Active</option><option value="TRIAL">Trial</option><option value="SUSPENDED">Deactivated</option>
             </select></Field>
             <Field label="Start date (UTC)"><input name="start" type="date" defaultValue={selected.starts_on || ''} /></Field>
             <Field label="Branch limit"><input name="maxBranches" type="number" min={1} max={1000} defaultValue={selected.max_branches ?? ''} placeholder="Unlimited" /></Field>
