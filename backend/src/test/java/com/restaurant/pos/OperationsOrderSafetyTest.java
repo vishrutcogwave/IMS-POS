@@ -26,7 +26,7 @@ class OperationsOrderSafetyTest {
         when(printing.route(actor,outlet,category)).thenReturn(Map.of("id",UUID.randomUUID().toString()));
         when(support.snapshot(actor,outlet,first)).thenReturn(first);
         when(printing.route(actor,outlet,secondCategory)).thenReturn(null);
-        assertEquals(422,assertThrows(ApiException.class,() -> service.send(actor,orderId,new OperationsDtos.Version(3))).status());
+        assertEquals(422,assertThrows(ApiException.class,() -> service.send(actor,orderId,new OperationsDtos.SendKot(3,null,null))).status());
         verify(db,never()).update(anyString(),any(Object[].class)); verify(support,never()).number(any(),any(),anyString());
         verify(printing,never()).enqueue(any(),any(),any(),anyString(),any(),any(),any());
     }
@@ -34,15 +34,15 @@ class OperationsOrderSafetyTest {
         assertEquals(409,assertThrows(ApiException.class,() -> service.editItem(actor,orderId,lineId,new OperationsDtos.EditItem(2,3,""))).status());
         verify(support,never()).line(any(),anyMap(),any()); verify(db,never()).update(anyString(),any(Object[].class));
     }
-    @Test void sentLinesCannotBeEditedOrCancelledIndividually() {
+    @Test void sentLinesWithoutAKitchenTicketCannotBeEditedOrCancelled() {
         when(support.line(actor,order,lineId)).thenReturn(line(lineId,category,2));
         assertEquals(409,assertThrows(ApiException.class,() -> service.editItem(actor,orderId,lineId,new OperationsDtos.EditItem(3,3,""))).status());
-        assertEquals(409,assertThrows(ApiException.class,() -> service.cancelItem(actor,orderId,lineId,new OperationsDtos.Cancel(3,"Guest changed mind"))).status());
+        assertEquals(409,assertThrows(ApiException.class,() -> service.cancelItem(actor,orderId,lineId,new OperationsDtos.RemoveItem(3,"Guest changed mind",null))).status());
         verify(db,never()).update(anyString(),any(Object[].class));
     }
     @Test void sentPartialLineCannotSilentlyGenerateDeltaTicket() {
         when(support.lines(actor,order,true)).thenReturn(List.of(line(lineId,category,1)));
-        assertEquals(409,assertThrows(ApiException.class,() -> service.send(actor,orderId,new OperationsDtos.Version(3))).status());
+        assertEquals(409,assertThrows(ApiException.class,() -> service.send(actor,orderId,new OperationsDtos.SendKot(3,null,null))).status());
         verify(db,never()).update(anyString(),any(Object[].class));
     }
     @Test void billPendingOrderCannotChangeCart() {

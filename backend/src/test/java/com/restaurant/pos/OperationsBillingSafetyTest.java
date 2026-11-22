@@ -33,7 +33,7 @@ class OperationsBillingSafetyTest {
         verify(db,never()).update(anyString(),any(Object[].class));
     }
     @Test void missingReceiptPrinterCannotCommitSettlement() {
-        when(printing.receiptPrinter(actor,outlet)).thenThrow(new ApiException(422,"Receipt printer required"));
+        when(printing.receiptPrinters(actor,outlet)).thenThrow(new ApiException(422,"Receipt printer required"));
         assertEquals(422,assertThrows(ApiException.class,() -> service.settle(actor,billId,new OperationsDtos.Settle(0,List.of(payment("CASH","100.00","")),new BigDecimal("120.00")))).status());
         verify(db,never()).update(anyString(),any(Object[].class));
     }

@@ -14,6 +14,8 @@ export function renderLines(job) {
   const pair = (label, value) => clean(label).slice(0, width - 14).padEnd(width - 14) + Number(value || 0).toFixed(2).padStart(14);
   const rows = [clean(p.title || job.document_type), clean(p.outlet), clean(p.address), clean(p.taxNumber), line,
     `Ref: ${clean(p.reference)}`, `Order: ${clean(p.order)}  Table: ${clean(p.table || '-')}`, clean(p.createdAt), line];
+  if (p.waiterName) rows.push(wrap('Waiter: ' + p.waiterName, width));
+  if (p.covers) rows.push(wrap('Pax: ' + p.covers, width));
   if (p.originalReference) rows.push(`Original: ${clean(p.originalReference)}`);
   if (p.reason || p.reprintReason) rows.push(wrap(`Reason: ${p.reason || p.reprintReason}`, width));
   for (const item of p.lines || []) {

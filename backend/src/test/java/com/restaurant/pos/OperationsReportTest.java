@@ -44,12 +44,19 @@ class OperationsReportTest {
         when(db.one(anyString(),any(Object[].class))).thenAnswer(call -> call.<String>getArgument(0).contains("count(*) as count")?Map.of("count",0L):Map.of());
         when(db.list(anyString(),any(Object[].class))).thenAnswer(call -> {
             String sql=call.getArgument(0); Object[] args=(Object[])call.getRawArguments()[1];
-            assertEquals(a.tenantId(),args[0]); assertEquals(outlet,args[1]);
+            if (sql.contains("from outlets o")) {
+                assertEquals(a.tenantId(), args[2]);
+                assertEquals(a.role(), args[3]);
+                assertEquals(a.userId(), args[4]);
+                assertTrue(sql.contains("from user_outlets"));
+            } else {
+                assertEquals(a.tenantId(),args[0]); assertEquals(outlet,args[1]);
+            }
             assertTrue(sql.contains("tenant_id=s.tenant_id")); assertTrue(sql.contains("outlet_id=s.outlet_id"));
             assertFalse(sql.contains("join menu_items")); assertFalse(sql.contains("join categories")); return List.of();
         });
         ReportService reports=new ReportService(db,support);
-        for(String type:List.of("daily-sales","item-sales","category-sales","outlet-sales","payments","kot-register","kot-cancellations","bill-reprints","bill-cancellations","bill-modifications","table-activity","tax-settlement")) {
+        for(String type:List.of("daily-sales","item-sales","category-sales","outlet-sales","payments","payment-details","kot-register","nc-kots","kot-cancellations","bill-reprints","bill-cancellations","bill-modifications","table-activity","tax-settlement")) {
             var report=reports.report(a,outlet,type,"2026-11-18","2026-11-18",0,25);
             assertEquals(0L,report.get("totalElements")); assertEquals(List.of(),report.get("rows"));
         }

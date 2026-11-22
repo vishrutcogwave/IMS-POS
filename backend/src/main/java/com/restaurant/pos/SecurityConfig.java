@@ -16,7 +16,7 @@ import org.springframework.security.web.authentication.AnonymousAuthenticationFi
 public class SecurityConfig {
     @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(12); }
     @Bean
-    SecurityFilterChain security(HttpSecurity http, AuthService auth, ObjectMapper mapper,
+    SecurityFilterChain security(HttpSecurity http, AuthService auth, ObjectMapper mapper, PrintDeviceController printDevices,
             @Value("${app.origin}") String origin, @Value("${app.api-docs-enabled:false}") boolean docs) throws Exception {
         http.csrf(csrf -> csrf.disable()) // Opaque-session CSRF is checked by SessionFilter, including logout.
             .cors(cors -> cors.disable())
@@ -32,6 +32,7 @@ public class SecurityConfig {
                     .permissionsPolicyHeader(policy -> policy.policy("camera=(), microphone=(), geolocation=()")))
             .authorizeHttpRequests(access -> {
                 access.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/onboard").permitAll();
+                access.requestMatchers("/api/platform/**").permitAll();
                 if (docs) access.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll();
                 access.requestMatchers("/api/**").authenticated().anyRequest().denyAll();
             })
@@ -44,7 +45,7 @@ public class SecurityConfig {
                     response.setStatus(403); response.setContentType("application/json");
                     mapper.writeValue(response.getOutputStream(), ApiErrors.body(403, "Access denied.", request));
                 }))
-            .addFilterBefore(new SessionFilter(auth, mapper, origin), AnonymousAuthenticationFilter.class);
+            .addFilterBefore(new SessionFilter(auth, mapper, origin, printDevices), AnonymousAuthenticationFilter.class);
         return http.build();
     }
 }

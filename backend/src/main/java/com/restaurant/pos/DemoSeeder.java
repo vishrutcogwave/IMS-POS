@@ -33,7 +33,7 @@ public class DemoSeeder implements ApplicationRunner {
         UUID tenant = UUID.randomUUID(), owner = UUID.randomUUID(), branch = UUID.randomUUID(), outlet = UUID.randomUUID();
         String hash = passwords.encode(password);
         db.asTenant(tenant, () -> {
-            int inserted = db.update("insert into tenants(id,slug,name,receipt_address,receipt_footer) values (?,?,?,?,?) on conflict(slug) do nothing",
+            int inserted = db.update("insert into tenants(id,slug,name,receipt_address,receipt_footer,is_demo) values (?,?,?,?,?,true) on conflict(slug) do nothing",
                     tenant, slug, name, address, "Good food. Warm company. See you again soon.");
             if (inserted == 0) return null;
             db.update("insert into branches(id,tenant_id,name,address) values (?,?,?,?)", branch, tenant, coastal ? "Seafront" : "Garden District", address);
@@ -86,7 +86,12 @@ public class DemoSeeder implements ApplicationRunner {
     }
     private UUID category(UUID tenant, UUID outlet, String name, String department, int order, UUID printer) {
         UUID id = UUID.randomUUID();
-        db.update("insert into categories(id,tenant_id,outlet_id,name,department,sort_order) values (?,?,?,?,?,?)", id, tenant, outlet, name, department, order);
+        db.update("insert into menu_groups(id,tenant_id,outlet_id,name) values (?,?,?,'General') on conflict do nothing",
+                UUID.randomUUID(), tenant, outlet);
+        db.update("""
+                insert into categories(id,tenant_id,outlet_id,name,department,sort_order,group_id)
+                select ?,?,?,?,?,?,id from menu_groups where tenant_id=? and outlet_id=? and lower(name)='general'
+                """, id, tenant, outlet, name, department, order, tenant, outlet);
         db.update("insert into category_routes(tenant_id,outlet_id,category_id,printer_id) values (?,?,?,?)", tenant, outlet, id, printer);
         return id;
     }

@@ -8,8 +8,7 @@
     "start:backend": "node scripts/start-backend.mjs",
     "postgres:local": "node scripts/local-postgres.mjs",
     "test:integration": "node --test scripts/integration.test.mjs",
-    "test:print": "node --test print-agent/renderer.test.mjs print-agent/ims-windows.test.mjs",
-    "print:agent": "node print-agent/agent.mjs"
+    "test:print": "node --test print-agent/renderer.test.mjs print-agent/ims-windows.test.mjs"
   },
   "devDependencies": { "pg": "^8.16.3" }
 }

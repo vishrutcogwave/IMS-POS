@@ -10,11 +10,15 @@ services:
       DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD:?Set the migration password}
       APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS origin}
       APP_ONBOARDING_KEY: ${APP_ONBOARDING_KEY:-}
+      APP_PLATFORM_ADMIN_EMAIL: ${APP_PLATFORM_ADMIN_EMAIL:-}
+      APP_PLATFORM_ADMIN_PASSWORD: ${APP_PLATFORM_ADMIN_PASSWORD:-}
       APP_COOKIE_SECURE: "true"
       APP_SEED_DEMO: "false"
       APP_DOCS_ENABLED: "false"
   frontend:
-    build: ./frontend
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
     restart: unless-stopped
     depends_on:
       - backend

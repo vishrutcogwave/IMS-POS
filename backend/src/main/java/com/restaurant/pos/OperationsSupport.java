@@ -79,6 +79,17 @@ public class OperationsSupport {
         Map<String,Object> row=db.one("insert into document_counters(tenant_id,outlet_id,kind,value) values(?,?,?,1) on conflict(tenant_id,outlet_id,kind) do update set value=document_counters.value+1 where document_counters.tenant_id=? and document_counters.outlet_id=? returning value",a.tenantId(),outlet,kind,a.tenantId(),outlet);
         return kind+"-"+String.format(java.util.Locale.ROOT,"%06d",((Number)row.get("value")).longValue());
     }
+    String billNumber(Actor actor, UUID outlet, boolean nc) {
+        UUID branch=id(db.one("select branch_id from outlets where tenant_id=? and id=? for share",actor.tenantId(),outlet).get("branch_id"));
+        String kind=nc?"NC-BILL":"BILL";
+        var row=db.one("""
+            insert into branch_bill_counters(tenant_id,branch_id,kind,value) values(?,?,?,1)
+            on conflict(tenant_id,branch_id,kind) do update set value=branch_bill_counters.value+1
+            returning value
+            """,actor.tenantId(),branch,kind);
+        return kind+"-"+row.get("value");
+    }
+
     Map<String,Object> menu(Actor a,UUID outlet,UUID menuId) {
         db.outlet(a,outlet);
         return db.one("select m.*,c.name as category_name from menu_items m join categories c on c.tenant_id=m.tenant_id and c.outlet_id=m.outlet_id and c.id=m.category_id where m.tenant_id=? and c.tenant_id=? and m.outlet_id=? and m.id=?",a.tenantId(),a.tenantId(),outlet,menuId);

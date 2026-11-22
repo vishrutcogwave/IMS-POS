@@ -1,0 +1,10 @@
+**
+!frontend/
+!frontend/**
+frontend/node_modules
+frontend/dist
+frontend/.env*
+!print-agent/
+!print-agent/ims-windows.mjs
+!print-agent/ims-windows.d.mts
+!print-agent/renderer.mjs

@@ -43,8 +43,8 @@ public class OperationsController {
         return keys.execute(a,key,"PATCH /orders/"+id+"/items/"+itemId,body,false,() -> scope.order(a,id,false),() -> orders.editItem(a,id,itemId,body));
     }
     @PostMapping("/orders/{id}/items/{itemId}/cancel")
-    public Object cancelItem(@PathVariable UUID id,@PathVariable UUID itemId,@Valid @RequestBody Cancel body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
-        Actor a=Actor.current(); a.require("CANCEL");
+    public Object cancelItem(@PathVariable UUID id,@PathVariable UUID itemId,@Valid @RequestBody RemoveItem body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
+        Actor a=Actor.current(); if (!a.can("CANCEL")) a.require("ORDER");
         return keys.execute(a,key,"POST /orders/"+id+"/items/"+itemId+"/cancel",body,true,() -> scope.order(a,id,false),() -> orders.cancelItem(a,id,itemId,body));
     }
     @PostMapping("/orders/{id}/transfer")
@@ -58,7 +58,7 @@ public class OperationsController {
         return keys.execute(a,key,"POST /orders/"+id+"/cancel",body,true,() -> scope.order(a,id,false),() -> orders.cancel(a,id,body));
     }
     @PostMapping("/orders/{id}/send")
-    public Object send(@PathVariable UUID id,@Valid @RequestBody Version body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
+    public Object send(@PathVariable UUID id,@Valid @RequestBody SendKot body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
         Actor a=Actor.current(); a.require("ORDER");
         return keys.execute(a,key,"POST /orders/"+id+"/send",body,true,() -> scope.order(a,id,false),() -> orders.send(a,id,body));
     }
@@ -73,6 +73,11 @@ public class OperationsController {
     public Object kotStatus(@PathVariable UUID id,@Valid @RequestBody KotStatus body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
         Actor a=Actor.current(); a.require("KITCHEN");
         return keys.execute(a,key,"POST /kots/"+id+"/status",body,false,() -> scope.kot(a,id,false),() -> orders.status(a,id,body.status()));
+    }
+    @PostMapping("/kots/{id}/void-items")
+    public Object voidKotItems(@PathVariable UUID id,@Valid @RequestBody VoidKotItems body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
+        Actor a=Actor.current(); a.require("CANCEL");
+        return keys.execute(a,key,"POST /kots/"+id+"/void-items",body,true,() -> scope.kot(a,id,false),() -> orders.voidKotItems(a,id,body));
     }
     @PostMapping("/kots/{id}/cancel")
     public Object cancelKot(@PathVariable UUID id,@Valid @RequestBody Reason body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
@@ -97,6 +102,17 @@ public class OperationsController {
     public Object cancelBill(@PathVariable UUID id,@Valid @RequestBody Cancel body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
         Actor a=Actor.current(); a.require("CANCEL");
         return keys.execute(a,key,"POST /bills/"+id+"/cancel",body,true,() -> scope.bill(a,id,false),() -> bills.cancel(a,id,body));
+    }
+    @PostMapping("/bills/{id}/correct-payment")
+    public Object correctPayment(@PathVariable UUID id,@Valid @RequestBody CorrectPayment body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
+        Actor a=Actor.current(); a.require("BILL"); a.require("CANCEL");
+        return keys.execute(a,key,"POST /bills/"+id+"/correct-payment",body,true,() -> scope.bill(a,id,false),() -> bills.correctPayment(a,id,body));
+    }
+    @PostMapping("/bills/{id}/reverse")
+    public Object reverseBill(@PathVariable UUID id,@Valid @RequestBody ReverseBill body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
+        Actor a=Actor.current(); a.require("BILL"); a.require("CANCEL");
+        if(body.reopen()) a.require("ORDER");
+        return keys.execute(a,key,"POST /bills/"+id+"/reverse",body,true,() -> scope.bill(a,id,false),() -> bills.reverse(a,id,body));
     }
     @PostMapping("/bills/{id}/modify")
     public Object modifyBill(@PathVariable UUID id,@Valid @RequestBody ModifyBill body,@RequestHeader(value="Idempotency-Key",required=false) String key) {

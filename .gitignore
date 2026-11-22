@@ -6,4 +6,6 @@ node_modules/
 dist/
 target/
 *.log
-print-agent/devices.json
+
+print-agent/windows/bin/
+print-agent/windows/obj/

@@ -2,7 +2,9 @@ package com.restaurant.pos;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,16 +34,51 @@ public class ApiErrors {
     }
     @ExceptionHandler(ApiException.class)
     ResponseEntity<?> api(ApiException ex, HttpServletRequest request) {
-        return ResponseEntity.status(ex.status()).body(body(ex.status(), ex.getMessage(), request));
+        var response = new LinkedHashMap<>(body(ex.status(), ex.getMessage(), request));
+        if (!ex.fieldErrors().isEmpty()) response.put("fieldErrors", ex.fieldErrors());
+        return ResponseEntity.status(ex.status()).body(response);
     }
-    @ExceptionHandler({MethodArgumentNotValidException.class, ConstraintViolationException.class,
-            HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    ResponseEntity<?> fields(MethodArgumentNotValidException ex, HttpServletRequest request) {
+        Map<String, String> issues = new LinkedHashMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(field ->
+                issues.putIfAbsent(field.getField(), field.getDefaultMessage() == null ? "Enter a valid value." : field.getDefaultMessage()));
+        return validation(issues, request);
+    }
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<?> unreadable(HttpMessageNotReadableException ex, HttpServletRequest request) {
+        if (ex.getCause() instanceof JsonMappingException mapping) {
+            StringBuilder path = new StringBuilder();
+            for (var reference : mapping.getPath()) {
+                String name = reference.getFieldName();
+                if (name != null && name.matches("[A-Za-z][A-Za-z0-9_]{0,63}")) {
+                    if (!path.isEmpty()) path.append('.');
+                    path.append(name);
+                } else if (reference.getIndex() >= 0) {
+                    path.append('[').append(reference.getIndex()).append(']');
+                }
+            }
+            if (!path.isEmpty()) return validation(Map.of(path.toString(), "Use the expected format or select a valid option."), request);
+        }
+        return ResponseEntity.badRequest().body(body(400, "The request could not be read. Check the form and submit it again.", request));
+    }
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<?> mismatch(MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+        return validation(Map.of(ex.getName(), "Use a valid value for this field."), request);
+    }
+    private ResponseEntity<?> validation(Map<String, String> issues, HttpServletRequest request) {
+        var response = new LinkedHashMap<>(body(400, "Check the highlighted fields and try again.", request));
+        response.put("fieldErrors", issues);
+        return ResponseEntity.badRequest().body(response);
+    }
+    @ExceptionHandler({ConstraintViolationException.class,
+
             org.springframework.web.bind.MissingServletRequestParameterException.class,
             org.springframework.web.method.annotation.HandlerMethodValidationException.class,
             IllegalArgumentException.class})
     ResponseEntity<?> invalid(Exception ex, HttpServletRequest request) {
         // Never include rejected values: they may contain credentials or another tenant's identifiers.
-        return ResponseEntity.badRequest().body(body(400, "Invalid request. Check required fields, formats and limits.", request));
+        return ResponseEntity.badRequest().body(body(400, "Check the required information and try again.", request));
     }
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<?> conflict(DataIntegrityViolationException ex, HttpServletRequest request) {

@@ -15,7 +15,7 @@ public class BillingService {
 
     public List<Map<String,Object>> list(Actor a,UUID outlet) {
         db.outlet(a,outlet);
-        return db.list("select b.*,o.number as order_number from bills b join orders o on o.tenant_id=b.tenant_id and o.outlet_id=b.outlet_id and o.id=b.order_id where b.tenant_id=? and o.tenant_id=? and b.outlet_id=? order by b.created_at desc,b.id",a.tenantId(),a.tenantId(),outlet);
+        return db.list("select b.*,b.number as bill_number,o.number as order_number from bills b join orders o on o.tenant_id=b.tenant_id and o.outlet_id=b.outlet_id and o.id=b.order_id where b.tenant_id=? and o.tenant_id=? and b.outlet_id=? order by b.created_at desc,b.id",a.tenantId(),a.tenantId(),outlet);
     }
     List<Map<String,Object>> items(Actor a,Map<String,Object> bill) {
         UUID outlet=id(bill.get("outlet_id")); db.outlet(a,outlet);
@@ -27,12 +27,24 @@ public class BillingService {
         Map<String,Object> bill=new LinkedHashMap<>(support.bill(a,billId,false)); UUID outlet=id(bill.get("outlet_id"));
         bill.put("items",items(a,bill));
         bill.put("payments",db.list("select p.* from payments p join bills b on b.tenant_id=p.tenant_id and b.id=p.bill_id where p.tenant_id=? and b.tenant_id=? and b.outlet_id=? and p.bill_id=? order by p.created_at,p.id",a.tenantId(),a.tenantId(),outlet,billId));
-        bill.put("order",support.order(a,id(bill.get("order_id")),false));
+        Map<String,Object> order = new LinkedHashMap<>(support.order(a,id(bill.get("order_id")),false));
+        order.put("order_number",order.get("number"));
+        if (order.get("table_id") != null) {
+            order.put("table_name",db.one("select name from restaurant_tables where tenant_id=? and outlet_id=? and id=?",
+                    a.tenantId(),outlet,id(order.get("table_id"))).get("name"));
+        }
+        bill.put("bill_number",bill.get("number"));
+        bill.put("order_number",order.get("number"));
+        bill.put("order",order);
         bill.put("outlet",support.outlet(a,outlet));
         bill.put("tenant",db.one("select name,receipt_address,tax_number,phone,receipt_footer from tenants where id=?",a.tenantId()));
-        bill.put("change",OperationsMoney.ZERO);
+
+        if("CANCELLED".equals(bill.get("status")) && bill.get("settled_at")!=null) {
+            var reversals=db.list("select reason,details->>'refundReference' as refund_reference,created_at from audit_log where tenant_id=? and outlet_id=? and action='BILL_PAYMENT_REVERSE' and entity_type='BILL' and entity_id=? order by created_at desc limit 1",a.tenantId(),outlet,billId);
+            if(!reversals.isEmpty()) bill.put("reversal",reversals.getFirst());
+        }
         if("PAID".equals(bill.get("status"))) {
-            Map<String,Object> receipt=object(printing.original(a,outlet,"BILL",billId).get("payload")); bill.put("receipt",receipt);
+            Map<String,Object> receipt=object(printing.currentBillReceipt(a,outlet,billId).get("payload")); bill.put("receipt",receipt);
             bill.put("change",receipt.getOrDefault("change",OperationsMoney.ZERO));
             bill.put("tenant",Map.of("name",text(receipt.get("businessName")),"receipt_address",text(receipt.get("address")),"tax_number",text(receipt.get("taxNumber")),"phone",text(receipt.get("phone")),"receipt_footer",text(receipt.get("footer"))));
             Map<String,Object> outletSnapshot=object(bill.get("outlet")); outletSnapshot.put("name",receipt.get("outlet")); outletSnapshot.put("currency",receipt.get("currency")); bill.put("outlet",outletSnapshot);
@@ -48,10 +60,13 @@ public class BillingService {
         List<Map<String,Object>> snapshots=new ArrayList<>();
         for(Map<String,Object> line:lines) snapshots.add(support.snapshot(a,outlet,line));
         List<Map<String,Object>> priced=OperationsMoney.price(snapshots,OperationsMoney.amount(order.get("discount")));
+        if(request.ncBill() && (request.groups()!=null || lines.stream().anyMatch(line -> !Boolean.TRUE.equals(line.get("non_chargeable")))))
+            throw new ApiException(422,"An NC bill requires a single bill containing only items sent on NC KOTs.");
         List<List<Map<String,Object>>> groups=split(priced,request.groups());
         for(List<Map<String,Object>> group:groups) {
-            Map<String,Object> totals=OperationsMoney.totals(group); UUID bill=UUID.randomUUID(); String number=support.number(a,outlet,"BILL");
-            db.update("insert into bills(id,tenant_id,outlet_id,order_id,number,subtotal,discount,tax,total) values(?,?,?,?,?,?,?,?,?)",bill,a.tenantId(),outlet,orderId,number,totals.get("subtotal"),totals.get("discount"),totals.get("tax"),totals.get("total"));
+            boolean nc=group.stream().allMatch(line -> Boolean.TRUE.equals(line.get("non_chargeable")));
+            Map<String,Object> totals=OperationsMoney.totals(group); UUID bill=UUID.randomUUID(); String number=support.billNumber(a,outlet,nc);
+            db.update("insert into bills(id,tenant_id,outlet_id,order_id,number,subtotal,discount,tax,total,non_chargeable) values(?,?,?,?,?,?,?,?,?,?)",bill,a.tenantId(),outlet,orderId,number,totals.get("subtotal"),totals.get("discount"),totals.get("tax"),totals.get("total"),nc);
             for(Map<String,Object> line:group) db.update("insert into bill_items(id,tenant_id,bill_id,order_item_id,quantity,snapshot) values(?,?,?,?,?,?::jsonb)",UUID.randomUUID(),a.tenantId(),bill,id(line),line.get("quantity"),db.json(line));
             db.audit(a,outlet,"BILL_CREATE","BILL",bill,"",Map.of("order_id",orderId,"number",number,"totals",totals));
         }
@@ -100,6 +115,29 @@ public class BillingService {
         UUID outletId=id(bill.get("outlet_id")); Map<String,Object> outlet=support.outlet(a,outletId);
         Map<String,Object> order=support.order(a,id(bill.get("order_id")),true);
         if(!"BILL_PENDING".equals(order.get("status"))) throw new ApiException(409,"Order is not awaiting payment");
+        PaymentAmounts amounts=validatePayments(bill,outlet,request);
+        BigDecimal tender=amounts.tender(), change=amounts.change();
+
+        // Validate receipt routing before any settlement or payment writes.
+        List<Map<String,Object>> printers=printing.receiptPrinters(a,outletId);
+        List<Map<String,Object>> lineSnapshots=items(a,bill).stream().map(i -> object(i.get("snapshot"))).toList();
+        Map<String,Object> receipt=printing.payload(a,order,Boolean.TRUE.equals(bill.get("non_chargeable"))?"NC BILL":"RECEIPT",text(bill.get("number")),lineSnapshots);
+        for(String key:List.of("subtotal","discount","tax","total")) receipt.put(key,bill.get(key));
+        receipt.put("payments",request.payments()); receipt.put("cashTendered",tender); receipt.put("change",change); receipt.put("billId",billId);
+        for(OperationsDtos.Payment payment:request.payments()) db.update("insert into payments(id,tenant_id,bill_id,method,amount,reference) values(?,?,?,?,?,?)",UUID.randomUUID(),a.tenantId(),billId,payment.method(),OperationsMoney.money(payment.amount()),text(payment.reference()));
+        db.update("update bills set status='PAID',version=version+1,settled_at=now() where tenant_id=? and outlet_id=? and order_id=? and id=?",a.tenantId(),outletId,id(order),billId);
+        var printJobs = new ArrayList<UUID>();
+        for (var printer : printers) printJobs.add(id(printing.enqueue(a,outletId,id(printer),"BILL",billId,null,receipt)));
+        boolean allPaid=db.list("select id from bills where tenant_id=? and outlet_id=? and order_id=? and status='OPEN'",a.tenantId(),outletId,id(order)).isEmpty();
+        db.update("update orders set status=?,version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",allPaid?"SETTLED":"BILL_PENDING",a.tenantId(),outletId,id(order));
+        db.audit(a,outletId,"BILL_SETTLE","BILL",billId,"",Map.of("number",bill.get("number"),"order_id",id(order),"total",bill.get("total"),"payments",request.payments(),"cash_tendered",tender,"change",change,"table_id",text(order.get("table_id"))));
+        var result = detail(a,billId);
+        result.put("print_job_ids",printJobs);
+        return result;
+    }
+    private record PaymentAmounts(BigDecimal tender, BigDecimal change) {}
+
+    private PaymentAmounts validatePayments(Map<String,Object> bill,Map<String,Object> outlet,OperationsDtos.Settle request) {
         List<?> allowed=(List<?>)outlet.get("payment_methods");
         BigDecimal allocated=OperationsMoney.ZERO,cash=OperationsMoney.ZERO;
         for(OperationsDtos.Payment payment:request.payments()) {
@@ -112,21 +150,72 @@ public class BillingService {
         BigDecimal tender=request.cashTendered()==null?cash:OperationsMoney.money(request.cashTendered());
         if(tender.compareTo(cash)<0) throw new ApiException(422,"Cash tendered is less than the cash allocation");
         if(cash.signum()==0 && tender.signum()!=0) throw new ApiException(422,"Cash tendered requires a cash payment allocation");
-        BigDecimal change=tender.subtract(cash);
-        // Validate receipt routing before any settlement or payment writes.
-        Map<String,Object> printer=printing.receiptPrinter(a,outletId);
-        List<Map<String,Object>> lineSnapshots=items(a,bill).stream().map(i -> object(i.get("snapshot"))).toList();
-        Map<String,Object> receipt=printing.payload(a,order,"RECEIPT",text(bill.get("number")),lineSnapshots);
-        for(String key:List.of("subtotal","discount","tax","total")) receipt.put(key,bill.get(key));
-        receipt.put("payments",request.payments()); receipt.put("cashTendered",tender); receipt.put("change",change); receipt.put("billId",billId);
-        for(OperationsDtos.Payment payment:request.payments()) db.update("insert into payments(id,tenant_id,bill_id,method,amount,reference) values(?,?,?,?,?,?)",UUID.randomUUID(),a.tenantId(),billId,payment.method(),OperationsMoney.money(payment.amount()),text(payment.reference()));
-        db.update("update bills set status='PAID',version=version+1,settled_at=now() where tenant_id=? and outlet_id=? and order_id=? and id=?",a.tenantId(),outletId,id(order),billId);
-        printing.enqueue(a,outletId,id(printer),"BILL",billId,null,receipt);
-        boolean allPaid=db.list("select id from bills where tenant_id=? and outlet_id=? and order_id=? and status='OPEN'",a.tenantId(),outletId,id(order)).isEmpty();
-        db.update("update orders set status=?,version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",allPaid?"SETTLED":"BILL_PENDING",a.tenantId(),outletId,id(order));
-        db.audit(a,outletId,"BILL_SETTLE","BILL",billId,"",Map.of("number",bill.get("number"),"order_id",id(order),"total",bill.get("total"),"payments",request.payments(),"cash_tendered",tender,"change",change,"table_id",text(order.get("table_id"))));
+        return new PaymentAmounts(tender,tender.subtract(cash));
+    }
+
+    public Map<String,Object> correctPayment(Actor a,UUID billId,OperationsDtos.CorrectPayment request) {
+        reason(request.reason());
+        Map<String,Object> bill=support.bill(a,billId,true);
+        if(Boolean.TRUE.equals(bill.get("non_chargeable"))) throw new ApiException(422,"NC bills have no payment to correct.");
+        OperationsDtos.Settle payment=request.payment();
+        version(bill,payment.version());
+        if(!"PAID".equals(bill.get("status"))) throw new ApiException(409,"Select a paid bill to correct its recorded payment.");
+        UUID outlet=id(bill.get("outlet_id"));
+        PaymentAmounts amounts=validatePayments(bill,support.outlet(a,outlet),payment);
+        var printers=printing.receiptPrinters(a,outlet);
+        var original=printing.currentBillReceipt(a,outlet,billId);
+        var receipt=object(original.get("payload"));
+        Object previous=receipt.get("payments");
+        db.update("delete from payments where tenant_id=? and bill_id=?",a.tenantId(),billId);
+        for(var row:payment.payments()) db.update("insert into payments(id,tenant_id,bill_id,method,amount,reference) values(?,?,?,?,?,?)",
+                UUID.randomUUID(),a.tenantId(),billId,row.method(),OperationsMoney.money(row.amount()),text(row.reference()));
+        db.update("update bills set version=version+1 where tenant_id=? and outlet_id=? and id=?",a.tenantId(),outlet,billId);
+        receipt.put("title","CORRECTED RECEIPT");
+        receipt.put("billVersion",payment.version()+1);
+        receipt.put("payments",payment.payments());
+        receipt.put("cashTendered",amounts.tender());
+        receipt.put("change",amounts.change());
+        printing.supersedePendingBillReceipts(a,outlet,billId,"Superseded by corrected payment receipt");
+        for(var printer:printers) printing.enqueue(a,outlet,id(printer),"BILL",billId,id(original),receipt);
+        db.audit(a,outlet,"BILL_PAYMENT_CORRECT","BILL",billId,request.reason(),Map.of("previousPayments",previous,
+                "payments",payment.payments(),"previousReceiptJob",id(original),"cashTendered",amounts.tender(),"change",amounts.change()));
         return detail(a,billId);
     }
+
+    public Map<String,Object> reverse(Actor a,UUID billId,OperationsDtos.ReverseBill request) {
+        reason(request.reason());
+        var initial=support.bill(a,billId,false);
+        UUID orderId=id(initial.get("order_id")), outlet=id(initial.get("outlet_id"));
+        var order=support.order(a,orderId,true);
+        var bill=support.bill(a,billId,true);
+        version(bill,request.version());
+        if(!"PAID".equals(bill.get("status"))) throw new ApiException(409,"Only a paid bill can be reversed.");
+        boolean nc=Boolean.TRUE.equals(bill.get("non_chargeable"));
+        if(!nc && text(request.refundReference()).isBlank())
+            throw new ApiException(422,"Enter the completed refund reference.",Map.of("refundReference","Enter a refund reference."));
+        var siblings=siblings(a,bill);
+        if(request.reopen()) {
+            if(siblings.size()!=1) throw new ApiException(409,"Reverse the other paid bills and cancel any unpaid bills before reopening this order.");
+            if(order.get("table_id")!=null) {
+                UUID table=id(order.get("table_id"));
+                db.one("select id from restaurant_tables where tenant_id=? and outlet_id=? and id=? for update",a.tenantId(),outlet,table);
+                if(!db.list("select id from orders where tenant_id=? and outlet_id=? and table_id=? and id<>? and status in ('OPEN','BILL_PENDING')",a.tenantId(),outlet,table,orderId).isEmpty())
+                    throw new ApiException(409,"This table has a newer active order. Close that order before reopening this bill.");
+            }
+        }
+        var receipt=printing.currentBillReceipt(a,outlet,billId);
+        db.update("update bills set status='CANCELLED',reason=?,version=version+1 where tenant_id=? and outlet_id=? and id=?",
+                request.reason(),a.tenantId(),outlet,billId);
+        printing.supersedePendingBillReceipts(a,outlet,billId,"Payment was reversed");
+        if(request.reopen() || siblings.size()==1) db.update("update orders set status=?,version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",
+                request.reopen()?"OPEN":"CANCELLED",a.tenantId(),outlet,orderId);
+        else if(siblings.stream().noneMatch(sibling -> "OPEN".equals(sibling.get("status"))))
+            db.update("update orders set status='SETTLED',version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",a.tenantId(),outlet,orderId);
+        db.audit(a,outlet,"BILL_PAYMENT_REVERSE","BILL",billId,request.reason(),Map.of("orderId",orderId,
+                "amount",bill.get("total"),"refundReference",text(request.refundReference()).strip(),"receiptJob",id(receipt),"reopened",request.reopen()));
+        return detail(a,billId);
+    }
+
     public Map<String,Object> cancel(Actor a,UUID billId,OperationsDtos.Cancel request) {
         reason(request.reason()); Map<String,Object> bill=support.bill(a,billId,true); version(bill,request.version()); UUID outlet=id(bill.get("outlet_id"));
         if(!"OPEN".equals(bill.get("status"))) throw new ApiException(409,"Only unpaid bills can be cancelled. Paid refunds/reversals are not implemented.");

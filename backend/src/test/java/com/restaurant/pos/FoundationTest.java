@@ -205,7 +205,7 @@ class FoundationTest {
         TenantJdbc db = mock(TenantJdbc.class);
         when(db.tx(any(), any())).thenAnswer(invocation -> ((Supplier<?>) invocation.getArgument(1)).get());
         CatalogService catalog = new CatalogService(db, mock(AuthService.class), mock(PasswordEncoder.class));
-        CatalogDtos.CreateUser input = new CatalogDtos.CreateUser("Owner", "owner@example.test", "LongEnoughPassword", "OWNER", List.of());
+        CatalogDtos.CreateUser input = new CatalogDtos.CreateUser("Owner", "owner@example.test", "LongEnoughPassword", "OWNER", List.of(), null);
         assertEquals(403, assertThrows(ApiException.class, () -> catalog.createUser(actor("MANAGER"), input)).status());
         verify(db, never()).update(anyString(), any(Object[].class));
     }

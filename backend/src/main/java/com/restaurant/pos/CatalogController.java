@@ -18,6 +18,10 @@ public class CatalogController {
     public Map<String, Object> business(@Valid @RequestBody CatalogDtos.Business input) { return catalog.business(Actor.current(), input); }
     @PostMapping("/settings/branches")
     public Map<String, Object> branch(@Valid @RequestBody CatalogDtos.Branch input) { return catalog.branch(Actor.current(), input); }
+    @PutMapping("/settings/branches/{id}")
+    public Map<String, Object> updateBranch(@PathVariable UUID id, @Valid @RequestBody CatalogDtos.Branch input) { return catalog.updateBranch(Actor.current(), id, input); }
+    @PutMapping("/settings/items/prices")
+    public Map<String, Object> updatePrices(@Valid @RequestBody CatalogDtos.OutletPrices input) { return catalog.updatePrices(Actor.current(), input); }
     @PostMapping("/settings/outlets")
     public Map<String, Object> createOutlet(@Valid @RequestBody CatalogDtos.Outlet input) { return catalog.outlet(Actor.current(), null, input); }
     @PutMapping("/settings/outlets/{id}")
@@ -26,6 +30,10 @@ public class CatalogController {
     public Map<String, Object> createUser(@Valid @RequestBody CatalogDtos.CreateUser input) { return catalog.createUser(Actor.current(), input); }
     @PutMapping("/settings/users/{id}")
     public Map<String, Object> updateUser(@PathVariable UUID id, @Valid @RequestBody CatalogDtos.UpdateUser input) { return catalog.updateUser(Actor.current(), id, input); }
+    @PostMapping("/settings/groups")
+    public Map<String, Object> createGroup(@Valid @RequestBody CatalogDtos.Group input) { return catalog.group(Actor.current(), null, input); }
+    @PutMapping("/settings/groups/{id}")
+    public Map<String, Object> updateGroup(@PathVariable UUID id, @Valid @RequestBody CatalogDtos.Group input) { return catalog.group(Actor.current(), id, input); }
     @PostMapping("/settings/categories")
     public Map<String, Object> createCategory(@Valid @RequestBody CatalogDtos.Category input) { return catalog.category(Actor.current(), null, input); }
     @PutMapping("/settings/categories/{id}")
@@ -42,6 +50,24 @@ public class CatalogController {
     public Map<String, Object> createPrinter(@Valid @RequestBody CatalogDtos.Printer input) { return catalog.printer(Actor.current(), null, input); }
     @PutMapping("/settings/printers/{id}")
     public Map<String, Object> updatePrinter(@PathVariable UUID id, @Valid @RequestBody CatalogDtos.Printer input) { return catalog.printer(Actor.current(), id, input); }
+    @DeleteMapping("/settings/branches/{branch}/printer-assignments/{printer}")
+    public Map<String, Object> removeBranchPrinterAssignment(@PathVariable UUID branch, @PathVariable UUID printer) {
+        return catalog.removeBranchPrinterAssignment(Actor.current(), branch, printer);
+    }
+
+    @PutMapping("/settings/branches/{branch}/windows-printer-routes")
+    public Map<String, Object> branchWindowsPrinterRoutes(@PathVariable UUID branch, @Valid @RequestBody CatalogDtos.BranchWindowsRoutes input) {
+        return catalog.branchWindowsPrinterRoutes(Actor.current(), branch, input);
+    }
+
+    @PutMapping("/settings/windows-printer-routes")
+    public Map<String, Object> windowsPrinterRoutes(@Valid @RequestBody CatalogDtos.WindowsRoutes input) {
+        return catalog.windowsPrinterRoutes(Actor.current(), input);
+    }
+    @DeleteMapping("/settings/outlets/{outlet}/printer-assignments/{printer}")
+    public Map<String, Object> removePrinterAssignment(@PathVariable UUID outlet, @PathVariable UUID printer) {
+        return catalog.removePrinterAssignment(Actor.current(), outlet, printer);
+    }
     @PutMapping("/settings/routes")
     public Map<String, Object> routes(@Valid @RequestBody CatalogDtos.Routes input) { return catalog.routes(Actor.current(), input); }
 }

@@ -39,6 +39,8 @@ app:
   session-idle-minutes: ${APP_SESSION_IDLE_MINUTES:30}
   onboarding-key: ${APP_ONBOARDING_KEY:}
   api-docs-enabled: ${APP_API_DOCS_ENABLED:${APP_DOCS_ENABLED:false}}
+  platform-admin-email: ${APP_PLATFORM_ADMIN_EMAIL:}
+  platform-admin-password: ${APP_PLATFORM_ADMIN_PASSWORD:}
   seed-demo: ${APP_SEED_DEMO:false}
   demo-password: ${DEMO_PASSWORD:}
 springdoc:

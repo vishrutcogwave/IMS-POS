@@ -27,6 +27,11 @@ public class PrintingController {
         Actor a=Actor.current(); a.require("PRINT");
         return keys.execute(a,key,"POST /printing/jobs/"+id+"/retry",body,true,() -> scope.job(a,id,false),() -> printing.retry(a,id,body.reason()));
     }
+    @PostMapping("/local/claim")
+    public Object claimLocal(@RequestParam UUID outletId) {
+        Actor a=Actor.current(); a.require("PRINT");
+        return db.tx(a,() -> printing.claimLocal(a,outletId));
+    }
     @PostMapping("/claim")
     public Object claim(@Valid @RequestBody Claim body) { Actor a=Actor.current(); a.require("PRINT"); return db.tx(a,() -> printing.claim(a,body)); }
     @PostMapping("/jobs/{id}/ack")

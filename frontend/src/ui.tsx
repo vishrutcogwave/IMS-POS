@@ -1,10 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { cloneElement, createContext, isValidElement, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { DependencyList, FormEvent, ReactNode } from 'react';
 import { AlertCircle, ArrowLeft, Check, ChevronRight, CircleCheck, LoaderCircle, RefreshCw, UtensilsCrossed, X } from 'lucide-react';
 import { ApiError } from './api';
 import type { Amount, DateRange, OrderItem, Outlet, Permission, Session } from './types';
 
-export type Page = 'dashboard' | 'floor' | 'pos' | 'kitchen' | 'bills' | 'reports' | 'settings' | 'printing' | 'profile';
+export type Page = 'dashboard' | 'floor' | 'pos' | 'utility' | 'bills' | 'reports' | 'settings' | 'printing' | 'profile';
 export interface Navigation { page: Page; orderId?: string; tableId?: string; billId?: string }
 export interface Workspace { session: Session; outletId: string; outlet?: Outlet; can: (permission: Permission) => boolean; navigate: (to: Navigation) => void; refreshSession: () => Promise<void>; signedOut: (message?: string) => void }
 export const WorkspaceContext = createContext<Workspace | null>(null);
@@ -54,17 +54,42 @@ export function useAction(reload?: () => void) {
   const conflict = error instanceof ApiError && error.status === 409;
   const uncertain = error instanceof ApiError && error.uncertain;
   const feedback = <>
-    {error && <div className="notice error" role="alert"><AlertCircle size={18} /><div><strong>{conflict ? 'This record has changed.' : uncertain ? 'Result not confirmed' : 'Could not complete action'}</strong><p>{error.message}</p>{error instanceof ApiError && error.requestId && <small>Request: {error.requestId}</small>}{conflict && reload && <button className="text-button" onClick={() => { setError(undefined); reload(); }}>Reload latest record before making changes</button>}{uncertain && <button className="text-button" disabled={busy} onClick={() => void last.current?.()}>Retry this exact request</button>}</div></div>}
+    {error && <div className="notice error" role="alert"><AlertCircle size={18} /><div><strong>{conflict ? 'This record has changed.' : uncertain ? 'Result not confirmed' : 'Could not complete action'}</strong><p>{error.message}</p><ValidationIssues error={error} />{error instanceof ApiError && error.requestId && <small>Request: {error.requestId}</small>}{conflict && reload && <button className="text-button" onClick={() => { setError(undefined); reload(); }}>Reload latest record before making changes</button>}{uncertain && <button className="text-button" disabled={busy} onClick={() => void last.current?.()}>Retry this exact request</button>}</div></div>}
     {success && <div className="notice success" role="status"><CircleCheck size={18} /><span>{success}</span><button className="icon-button" aria-label="Dismiss message" onClick={() => setSuccess('')}><X size={15} /></button></div>}
   </>;
-  return { run, busy, error, feedback, blocked: busy || uncertain || conflict, clear: () => { setError(undefined); setSuccess(''); } };
+  return { run, busy, error, feedback, blocked: busy || uncertain || (conflict && !Object.keys(error.fieldErrors).length), clear: () => { setError(undefined); setSuccess(''); } };
 }
 export function Loading({ text = 'Loading your workspace…' }: { text?: string }) { return <div className="loading" role="status"><LoaderCircle size={22} className="spin" /><span>{text}</span></div>; }
 export function LoadError({ error, retry }: { error: Error; retry: () => void }) { return <div className="notice error" role="alert"><AlertCircle size={20} /><div><strong>Unable to load</strong><p>{error.message}</p><button className="text-button" onClick={retry}>Try again</button></div></div>; }
 export function Empty({ title, text, action }: { title: string; text: string; action?: ReactNode }) { return <div className="empty"><span className="empty-icon"><UtensilsCrossed size={28} strokeWidth={1.4} /></span><h3>{title}</h3><p>{text}</p>{action}</div>; }
 export function Badge({ status, children }: { status?: string; children?: ReactNode }) { return <span className={`badge ${(status || '').toLowerCase().replaceAll('_', '-')}`}>{children || label(status || '')}</span>; }
 export function Button({ children, busy, className = '', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean }) { return <button {...props} className={`button ${className}`} disabled={props.disabled || busy}>{busy && <LoaderCircle size={16} className="spin" />}{children}</button>; }
-export function Field({ label: title, children, hint, className = '' }: { label: string; children: ReactNode; hint?: string; className?: string }) { return <label className={`field ${className}`}><span>{title}</span>{children}{hint && <small>{hint}</small>}</label>; }
+const fieldNames: Record<string, string> = {
+  slug: 'Property ID', tenantSlug: 'Property ID', businessName: 'Restaurant name',
+  email: 'Email address', startsOn: 'Start date', expiresAt: 'Expiry date', maxBranches: 'Branch limit',
+};
+function fieldLabel(path: string) {
+  return path.split('.').map(part => fieldNames[part] ?? label(part.replace(/([a-z])([A-Z])/g, '$1 $2'))).join(' / ');
+}
+export function ValidationIssues({ error }: { error: unknown }) {
+  if (!(error instanceof ApiError)) return null;
+  const issues = Object.entries(error.fieldErrors);
+  if (!issues.length) return null;
+  return <ul className="validation-issues">{issues.map(([path, message]) =>
+    <li key={path}><strong>{fieldLabel(path)}:</strong> {message}</li>)}</ul>;
+}
+export function Field({ label: title, children, hint, error, className = '' }: {
+  label: string; children: ReactNode; hint?: string; error?: string; className?: string;
+}) {
+  const messageId = useId();
+  return <label className={`field ${error ? 'field-invalid' : ''} ${className}`}><span>{title}</span>
+    {error && isValidElement<{ 'aria-invalid'?: boolean; 'aria-describedby'?: string }>(children)
+      ? cloneElement(children, { 'aria-invalid': true, 'aria-describedby': messageId })
+      : children}
+    {hint && <small>{hint}</small>}
+    {error && <small className="field-error" id={messageId}>{error}</small>}
+  </label>;
+}
 export function CheckField({ label: title, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean }) { return <label className="check-field"><input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled} /><span>{title}</span></label>; }
 export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: string; title: string; description?: string; actions?: ReactNode }) { return <div className="page-heading"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="heading-actions min-w-0">{actions}</div>}</div>; }
 export function Refresh({ onClick, busy }: { onClick: () => void; busy?: boolean }) { return <button className="button subtle" onClick={onClick} disabled={busy}><RefreshCw size={16} className={busy ? 'spin' : ''} /><span>Refresh</span></button>; }

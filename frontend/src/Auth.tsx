@@ -1,15 +1,53 @@
 import { useState } from 'react';
-import { ArrowRight, ChefHat, Flame, LockKeyhole, ShieldCheck, UtensilsCrossed } from 'lucide-react';
+import { Brand } from './Brand';
 import { api } from './api';
+import { platformRequest } from './Platform';
 import { Button, Field, PageHeader, useAction, useWorkspace } from './ui';
 import type { Session } from './types';
 
-export function Auth({ onSession, message }: { onSession: (session: Session) => void; message: string }) {
-  const [onboarding, setOnboarding] = useState(false);
-  const [slug, setSlug] = useState(''); const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
-  const [businessName, setBusinessName] = useState(''); const [name, setName] = useState(''); const [key, setKey] = useState('');
+const PLATFORM_PROPERTY_ID = '@platform';
+
+export function Auth({ onSession, onPlatformSession, message }: {
+  onSession: (session: Session) => void;
+  onPlatformSession: (token: string) => void;
+  message: string;
+}) {
+  const [propertyId, setPropertyId] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const action = useAction();
-  return <div className="auth-layout"><aside className="auth-story"><div className="brand"><span className="brand-mark"><Flame size={25} /></span><span>hearth<span className="brand-light">table</span><small>THE RESTAURANT WORKSPACE</small></span></div><div className="auth-story-copy"><div className="eyebrow light">A little less chaos. A lot more hospitality.</div><h1>Great service<br />starts here.</h1><p>From the first table to the last receipt.<br />One thoughtful workspace for your restaurant.</p></div><div className="auth-illustration" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="plate"><div className="plate-center"><UtensilsCrossed size={55} strokeWidth={1} /></div></div><div className="floating-note note-one"><ChefHat size={23} /><span>Made for<br /><strong>the way you serve.</strong></span></div><div className="floating-note note-two"><span className="tiny-dot" />Kitchen to counter, connected.</div></div><div className="auth-footer">Thoughtful tools. Exceptional service.</div></aside><main className="auth-main"><div className="auth-card"><div className="auth-kicker"><span className="brand-mark small"><Flame size={19} /></span> HEARTH TABLE</div><h2>{onboarding ? 'Make yourself at home.' : 'Welcome back.'}</h2><p className="auth-intro">{onboarding ? 'Set up your restaurant with an administrator-issued onboarding key.' : 'Your next great service starts with a sign in.'}</p>{message && <div className="notice info" role="status"><ShieldCheck size={19} /><span>{message}</span></div>}<form onSubmit={e => { e.preventDefault(); void action.run(async () => { if (onboarding) { const result = await api.onboard({ businessName, slug, name, email, password }, key); setSlug(result.slug); setOnboarding(false); setKey(''); setPassword(''); } else onSession(await api.login({ tenantSlug: slug, email, password })); }, onboarding ? 'Restaurant created. Sign in with your owner account.' : ''); }}><fieldset disabled={action.blocked}>{onboarding && <><Field label="Business name"><input value={businessName} onChange={e => setBusinessName(e.target.value)} required autoComplete="organization" /></Field><Field label="Your full name"><input value={name} onChange={e => setName(e.target.value)} required autoComplete="name" /></Field></>}<Field label="Restaurant workspace" hint={onboarding ? 'A unique slug, using lowercase letters, numbers and hyphens.' : 'The workspace slug provided by your restaurant administrator.'}><div className="input-affix"><UtensilsCrossed size={17} /><input value={slug} onChange={e => setSlug(e.target.value.toLowerCase())} placeholder="your-restaurant" required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" autoComplete="organization" /></div></Field><Field label="Email address"><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@restaurant.com" autoComplete="username" required /></Field><Field label="Password"><input type="password" value={password} onChange={e => setPassword(e.target.value)} minLength={onboarding ? 12 : undefined} placeholder={onboarding ? 'At least 12 characters' : 'Enter your password'} autoComplete={onboarding ? 'new-password' : 'current-password'} required /></Field>{onboarding && <Field label="Server-issued onboarding key" hint="Contact your administrator for access. Public signup is not available."><input type="password" value={key} onChange={e => setKey(e.target.value)} required autoComplete="off" /></Field>}</fieldset>{action.feedback}<Button className="full" type="submit" busy={action.busy} disabled={action.blocked}>{onboarding ? 'Create restaurant workspace' : 'Sign in to your workspace'}<ArrowRight size={18} /></Button></form><div className="auth-switch">{onboarding ? 'Already have a workspace?' : 'Opening a new restaurant?'} <button className="text-button" disabled={action.blocked} onClick={() => { setOnboarding(!onboarding); action.clear(); }}>{onboarding ? 'Sign in' : 'Set up workspace'}</button></div><div className="secure-note"><LockKeyhole size={14} />Secure, cookie-based sessions. Your restaurant stays yours.</div></div><footer className="auth-legal">Hearth Table <span>Restaurant operations, thoughtfully connected.</span></footer></main></div>;
+
+  return <main className="shared-sign-in">
+    <div className="hotel-sign-in-scene" aria-hidden="true">
+      <img className="hotel-sign-in-image" src="/hotel-sign-in.jpg" alt="" fetchPriority="high" />
+    </div>
+    <section className="card shared-sign-in-card">
+      <div className="shared-sign-in-brand"><Brand /></div>
+      <h1>Sign in</h1>
+      {message && <p className="notice info" role="status">{message}</p>}
+      <form onSubmit={event => {
+        event.preventDefault();
+        const property = propertyId.trim().toLowerCase();
+        const email = username.trim();
+        void action.run(async () => {
+          if (property === PLATFORM_PROPERTY_ID) {
+            const { token } = await platformRequest<{ token: string }>('/login', '', 'POST', { email, password });
+            onPlatformSession(token);
+          } else {
+            onSession(await api.login({ tenantSlug: property, email, password }));
+          }
+        });
+      }}>
+        <fieldset disabled={action.blocked}>
+          <Field label="Property ID"><input value={propertyId} onChange={event => setPropertyId(event.target.value)} autoComplete="organization" autoCapitalize="none" spellCheck={false} maxLength={64} required /></Field>
+          <Field label="Username"><input type="email" value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={254} required /></Field>
+          <Field label="Password"><input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" maxLength={256} required /></Field>
+        </fieldset>
+        {action.feedback}
+        <Button className="full" type="submit" busy={action.busy} disabled={action.blocked}>Sign in</Button>
+      </form>
+    </section>
+  </main>;
 }
 
 export function Profile() {

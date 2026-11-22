@@ -21,8 +21,10 @@ public final class SessionFilter extends OncePerRequestFilter {
     private final AuthService auth;
     private final ObjectMapper mapper;
     private final String origin;
-    public SessionFilter(AuthService auth, ObjectMapper mapper, String origin) {
-        this.auth = auth; this.mapper = mapper; this.origin = canonicalOrigin(origin);
+    private final PrintDeviceController devices;
+    public SessionFilter(AuthService auth, ObjectMapper mapper, String origin) { this(auth, mapper, origin, null); }
+    public SessionFilter(AuthService auth, ObjectMapper mapper, String origin, PrintDeviceController devices) {
+        this.auth = auth; this.mapper = mapper; this.origin = canonicalOrigin(origin); this.devices = devices;
     }
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -47,7 +49,14 @@ public final class SessionFilter extends OncePerRequestFilter {
             String path = request.getRequestURI();
             boolean publicAuth = "POST".equals(request.getMethod())
                     && (path.equals("/api/auth/login") || path.equals("/api/auth/onboard"));
-            if (!publicAuth && path.startsWith("/api/")) {
+            boolean printDevice = "POST".equals(request.getMethod()) && Set.of("/api/print-device/pair",
+                    "/api/print-device/claim", "/api/print-device/start", "/api/print-device/result").contains(path);
+            if (printDevice) {
+                if (devices == null) throw new ApiException(401,"Print device authentication is unavailable.");
+                UUID pc = devices.authenticate(request.getHeader("Authorization"),path.endsWith("/pair"));
+                SecurityContextHolder.getContext().setAuthentication(
+                        new UsernamePasswordAuthenticationToken(pc,null,List.of()));
+            } else if (!publicAuth && path.startsWith("/api/") && !path.startsWith("/api/platform/")) {
                 String token = cookie(request);
                 AuthService.Session session = auth.resolve(token);
                 if (session == null) throw new ApiException(401, "Your session has expired. Sign in again.");

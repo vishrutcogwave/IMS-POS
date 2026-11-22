@@ -60,12 +60,13 @@ public class AuthService {
         if (tenants.isEmpty()) { passwords.matches(input.password(), dummyHash); throw invalidLogin(); }
         UUID tenant = UUID.fromString(tenants.get(0).get("id").toString());
         LoginResult result = db.asTenant(tenant, () -> {
-            List<Map<String, Object>> users = db.list("select id,name,email,role,password_hash,active from users where tenant_id=? and email=? for update", tenant, email);
+            List<Map<String, Object>> users = db.list("select id,name,email,role,password_hash,active,permitted_actions from users where tenant_id=? and email=? for update", tenant, email);
             Map<String, Object> user = users.isEmpty() ? null : users.get(0);
             boolean matches = passwords.matches(input.password(), user == null ? dummyHash : user.get("password_hash").toString());
             if (user == null || !matches || !Boolean.TRUE.equals(user.get("active"))) throw invalidLogin();
+            requireSubscription(tenant);
             UUID userId = UUID.fromString(user.get("id").toString());
-            Actor actor = new Actor(tenant, userId, user.get("role").toString(), user.get("name").toString(), email);
+            Actor actor = new Actor(tenant, userId, user.get("role").toString(), user.get("name").toString(), email, Actor.storedPermissions(user.get("permitted_actions")));
             String token = randomToken(), csrf = randomToken();
             Instant now = Instant.now();
             db.update("delete from auth_sessions where tenant_id=? and user_id=? and (expires_at<=? or created_at<=?)",
@@ -90,17 +91,28 @@ public class AuthService {
         UUID tenant = UUID.fromString(session.get("tenant_id").toString());
         UUID user = UUID.fromString(session.get("user_id").toString());
         return db.asTenant(tenant, () -> {
-            List<Map<String, Object>> users = db.list("select name,email,role from users where tenant_id=? and id=? and active=true", tenant, user);
+            List<Map<String, Object>> users = db.list("select name,email,role,permitted_actions from users where tenant_id=? and id=? and active=true", tenant, user);
             if (users.isEmpty()) {
                 db.update("delete from auth_sessions where token_hash=? and tenant_id=? and user_id=?", hash, tenant, user);
                 return null;
             }
+            requireSubscription(tenant);
             int renewed = db.update("update auth_sessions set expires_at=least(created_at+interval '12 hours', now()+(? * interval '1 minute')) where token_hash=? and tenant_id=? and user_id=? and expires_at>now() and created_at>now()-interval '12 hours'",
                     inactivity.toMinutes(), hash, tenant, user);
             if (renewed != 1) return null;
             Map<String, Object> details = users.get(0);
-            return new Session(new Actor(tenant, user, details.get("role").toString(), details.get("name").toString(), details.get("email").toString()), session.get("csrf_token").toString(), hash);
+            return new Session(new Actor(tenant, user, details.get("role").toString(), details.get("name").toString(), details.get("email").toString(), Actor.storedPermissions(details.get("permitted_actions"))), session.get("csrf_token").toString(), hash);
         });
+    }
+
+    private void requireSubscription(UUID tenant) {
+        if (!db.list("""
+                select id from tenants where id=? and
+                (subscription_status='SUSPENDED' or subscription_expires_at<=now()
+                 or subscription_starts_on>(now() at time zone 'UTC')::date)
+                """, tenant).isEmpty()) {
+            throw new ApiException(403, "This restaurant subscription is currently unavailable. Contact your platform administrator.");
+        }
     }
 
     public Map<String, Object> envelope(Actor actor, String csrf) {
@@ -152,11 +164,22 @@ public class AuthService {
 
     /** Internal bootstrap, deliberately not exposed as an unauthenticated tenant switch. */
     UUID provision(AuthDtos.Onboard input) {
-        validatePassword(input.password());
+        return provision(input, null, null);
+    }
+
+    UUID provision(AuthDtos.Onboard input, Integer maxBranches, Integer maxUsers) {
+        if (!passwordLength(input.password(), 12)) {
+            throw new ApiException(400, "Check the password and try again.",
+                    Map.of("password", "Use at least 12 characters and no more than 72 UTF-8 bytes. Accented letters and emoji may use several bytes."));
+        }
         UUID tenant = UUID.randomUUID(), owner = UUID.randomUUID(), branch = UUID.randomUUID(), outlet = UUID.randomUUID();
         String passwordHash = passwords.encode(input.password());
         return db.asTenant(tenant, () -> {
-            db.update("insert into tenants(id,slug,name) values (?,?,?)", tenant, input.slug(), input.businessName().strip());
+            if (db.update("insert into tenants(id,slug,name,subscription_max_branches,subscription_max_users) values (?,?,?,?,?) on conflict (slug) do nothing",
+                    tenant, input.slug(), input.businessName().strip(), maxBranches, maxUsers) == 0) {
+                throw new ApiException(409, "This Property ID is already in use.",
+                        Map.of("slug", "Choose a different Property ID."));
+            }
             db.update("insert into branches(id,tenant_id,name) values (?,?,?)", branch, tenant, "Main branch");
             String outletName = input.businessName().strip();
             if (outletName.length() > 110) outletName = outletName.substring(0, 110);

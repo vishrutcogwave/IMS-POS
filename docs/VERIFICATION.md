@@ -22,3 +22,41 @@ The application in this Git repository starts from the independently developed H
 ## Remaining acceptance
 
 Complete Windows default, installed and LAN printer tests on real hardware. Verify receipt output from a Windows browser and a mobile browser, including 58/80 mm sizing, routing and copies. Exercise production containers and restore procedures in staging. Perform interactive browser acceptance across devices. Procurement and stock ledgers remain outside the restaurant billing build.
+
+## Platform administration check
+
+The frontend build and all 58 Java tests and six printing tests passed. Flyway
+applied and validated the platform subscription migration on embedded PostgreSQL 17.
+The 15 lifecycle scenarios and the new platform scenario passed. The new scenario
+covers authenticated provisioning, tenant/admin separation, invalid credentials,
+trial validation, suspensions, expiry, reactivation, branch limits and audit history.
+Chromium checks passed at desktop and mobile widths for login, restaurant creation,
+subscription editing, history and sign-out.
+
+### IMS-style POS screen check
+
+The production frontend build, 58 Java tests, 16 PostgreSQL integration
+scenarios and six print tests passed. The platform scenario also verifies
+profile updates, username changes, password reset, last-owner protection,
+cross-property rejection, session invalidation and credential audit history.
+Chromium verified the three platform pages on mobile and all nine restaurant
+workspaces on desktop and mobile, including navigation and mobile overflow.
+
+### November 21 manual checkout
+
+Browsed the Udupi property read-only and found it signed into a different
+tenant from the Saffron demo. Used a separate loopback browser session for
+all writes. In a Saffron test outlet, verified invalid and valid sign-in,
+dine-in with covers, two menu categories, item variants and kitchen notes,
+station-specific KOT jobs, a split bill of INR 84.00 and INR 178.50, INR 16.00
+cash change, release of table T1, sales report updates, kitchen progression,
+profile, platform navigation, and the print queue's pending and test statuses.
+
+Fixed missing order, bill and KOT references in API responses and added the
+table name to the receipt view. Verified these against the saved order, bills
+and tickets in the browser and added PostgreSQL regression checks. The clean
+Java build passed all 58 tests, the PostgreSQL suite passed all 19 scenarios,
+and six print tests passed. CSV export was checked through the API. The manual
+browser download step was interrupted. Physical output and spooler behavior
+remain unverified. The manual test order and print jobs remain in the local
+test outlet for inspection.
