@@ -62,6 +62,7 @@ public sealed class BridgeConfig
 
         var productionOrigins = new[]
 {
+    "https://pos.hiremathwebstudio.in",
     "https://hiremathwebstudio.in",
     "https://www.hiremathwebstudio.in"
 };
