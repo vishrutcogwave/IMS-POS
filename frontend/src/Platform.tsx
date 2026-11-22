@@ -86,8 +86,14 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
     event.preventDefault();
     const form = event.currentTarget;
     const fields = Object.fromEntries(new FormData(form));
-    const payload = { ...fields, slug: String(fields.slug).trim().toLowerCase(),
-      maxBranches: Number(fields.maxBranches), maxUsers: Number(fields.maxUsers) };
+    const payload = {
+      ...fields,
+      slug: String(fields.slug).trim().toLowerCase(),
+      maxBranches: Number(fields.maxBranches),
+      maxUsers: Number(fields.maxUsers),
+      startsOn: fields.startsOn ? String(fields.startsOn).trim() : null,
+      endsOn: fields.endsOn ? String(fields.endsOn).trim() : null,
+    };
     void run(async () => {
       await platformRequest('/tenants', token, 'POST', payload);
       setRestaurants(await platformRequest<Subscription[]>('/tenants', token));

@@ -28,7 +28,12 @@ const navigation: { page: Page; title: string; permission?: Permission; Icon: ty
 ];
 export default function App() {
   const [session, setSession] = useState<Session | null>(null); const [booting, setBooting] = useState(true); const [bootError, setBootError] = useState(''); const [message, setMessage] = useState(''); const [outletId, setOutletId] = useState(''); const [location, setLocation] = useState<Navigation>({ page: 'floor' }); const [mobileNav, setMobileNav] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [search, setSearch] = useState(''); const [help, setHelp] = useState(false); const logout = useAction();
-  const [platformToken, setPlatformToken] = useState('');
+  const [platformToken, setPlatformToken] = useState(() => sessionStorage.getItem('pos_platform_token') || '');
+  const updatePlatformToken = (token: string) => {
+    if (token) sessionStorage.setItem('pos_platform_token', token);
+    else sessionStorage.removeItem('pos_platform_token');
+    setPlatformToken(token);
+  };
   const signedOut = (text = 'Your session has expired. Sign in to continue.') => { clearSession(); setSession(null); setOutletId(''); setMessage(text); setMobileNav(false); setSearchOpen(false); };
   const [branchPrint, setBranchPrint] = useState<BranchPrintState>();
   const [pcPrintError, setPcPrintError] = useState('');
@@ -88,8 +93,8 @@ export default function App() {
   useEffect(() => { void bootstrap(); }, []);
   if (booting) return <div className="boot-screen"><div className="boot-brand"><Brand /></div><Loading text="Preparing your restaurant workspace…" /></div>;
   if (bootError && !session) return <div className="boot-screen"><div className="boot-brand"><Brand /></div><h2>Your workspace is taking a moment.</h2><p>{bootError}</p><Button onClick={() => void bootstrap()}>Reconnect to the server</Button></div>;
-  if (platformToken) return <Platform token={platformToken} onSignOut={() => { setPlatformToken(''); setMessage('You have signed out.'); }} />;
-  if (!session) return <Auth onSession={acceptSession} onPlatformSession={setPlatformToken} message={message} />;
+  if (platformToken) return <Platform token={platformToken} onSignOut={() => { updatePlatformToken(''); setMessage('You have signed out.'); }} />;
+  if (!session) return <Auth onSession={acceptSession} onPlatformSession={updatePlatformToken} message={message} />;
   const can = (permission: Permission) => session.user.permissions.includes(permission);
   const allowed = navigation.filter(n => (!n.permission || can(n.permission)) && (n.page !== 'settings' || ['OWNER', 'MANAGER'].includes(session.user.role)));
   const page = location.page === 'profile' || (location.page === 'pos' && can('ORDER') && !!(location.orderId || location.tableId)) || allowed.some(n => n.page === location.page) ? location.page : allowed[0]?.page || 'profile';
