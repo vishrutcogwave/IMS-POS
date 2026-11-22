@@ -852,7 +852,7 @@ test('Platform administrator controls access and audits subscriptions without te
   assert.equal(createdStore.max_users, 1);
   assert.equal(createdStore.is_demo, false);
   assert.equal(createdStore.starts_on, tenant.startsOn);
-  assert.equal(createdStore.expires_at, new Date(Date.parse(tenant.endsOn) + 86400000).toISOString().replace('.000Z', 'Z'));
+  assert.equal(createdStore.expires_at, new Date(Date.parse(tenant.endsOn + 'T00:00:00+05:30') + 86400000).toISOString().replace('.000Z', 'Z'));
   assert.ok(all.some(row => row.slug === 'saffron' && row.is_demo));
   assert.equal((await request(customer, '/settings/branches', { name: 'Over quota', address: '' })).status, 422);
   const extraUser = { name: 'Quota check user', email: 'quota-' + suffix + '@example.test', password,

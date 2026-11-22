@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Max;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/platform")
 public class PlatformController {
+    private static final ZoneId SUBSCRIPTION_ZONE = ZoneId.of("Asia/Kolkata");
     private final TenantJdbc db;
     private final AuthService auth;
     private final String email;
@@ -85,7 +86,7 @@ public class PlatformController {
             throw new ApiException(422, "Check the subscription dates.",
                     Map.of("endsOn", "The end date must be on or after the start date."));
         }
-        Instant expiry = input.endsOn() == null ? null : input.endsOn().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant expiry = input.endsOn() == null ? null : input.endsOn().plusDays(1).atStartOfDay(SUBSCRIPTION_ZONE).toInstant();
         var owner = new AuthDtos.Onboard(input.businessName(),input.slug(),input.name(),input.email(),input.password());
         return Map.of("id", auth.provision(owner, input.maxBranches(), input.maxUsers(), input.startsOn(), expiry), "slug", input.slug());
     }
@@ -99,7 +100,7 @@ public class PlatformController {
                    subscription_max_branches as max_branches, subscription_max_users as max_users, is_demo,
                    case when subscription_expires_at<=now() then 'EXPIRED'
                         when subscription_status='SUSPENDED' then 'SUSPENDED'
-                        when subscription_starts_on>(now() at time zone 'UTC')::date then 'SCHEDULED'
+                        when subscription_starts_on>(now() at time zone 'Asia/Kolkata')::date then 'SCHEDULED'
                         else subscription_status end as access_status
             from tenants order by name, id
             """);
@@ -148,7 +149,7 @@ public class PlatformController {
             throw new ApiException(422, "Trial subscriptions require an expiry date.");
         }
         if (value.startsOn() != null && value.expiresAt() != null &&
-            !value.expiresAt().isAfter(value.startsOn().atStartOfDay(ZoneOffset.UTC).toInstant())) {
+            !value.expiresAt().isAfter(value.startsOn().atStartOfDay(SUBSCRIPTION_ZONE).toInstant())) {
             throw new ApiException(422, "Expiry must be after the subscription start.");
         }
         Timestamp expiry = value.expiresAt() == null ? null : Timestamp.from(value.expiresAt());

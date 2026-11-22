@@ -114,7 +114,7 @@ public class AuthService {
                        c.email, c.phone
                 from tenants t left join platform_contact c on c.singleton
                 where t.id=? and (t.subscription_expires_at<=now() or t.subscription_status='SUSPENDED'
-                   or t.subscription_starts_on>(now() at time zone 'UTC')::date)
+                   or t.subscription_starts_on>(now() at time zone 'Asia/Kolkata')::date)
                 """, tenant);
         if (!blocked.isEmpty()) {
             var notice = blocked.getFirst();

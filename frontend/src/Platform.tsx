@@ -20,6 +20,18 @@ type Subscription = {
 };
 type History = { id: number; operator_email: string; changed_at: string; reason: string; new_value: Pick<Subscription, 'plan' | 'status'> };
 
+const indiaTimeZone = 'Asia/Kolkata';
+const indiaDateTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: indiaTimeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+function indiaExpiryFields(expiresAt: string | null) {
+  if (!expiresAt) return { date: '', time: '23:59' };
+  const parts = Object.fromEntries(indiaDateTime.formatToParts(new Date(expiresAt)).map(part => [part.type, part.value]));
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+}
+
 export async function platformRequest<T>(path: string, token = '', method = 'GET', body?: object): Promise<T> {
   const response = await fetch('/api/platform' + path, {
     method,
@@ -107,6 +119,8 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const expiry = String(form.get('expiry') || '');
+    const time = String(form.get('time') || '');
+    const previousExpiry = indiaExpiryFields(restaurant.expires_at);
     const path = '/tenants/' + restaurant.id;
     void run(async () => {
       await platformRequest(path, token, 'PUT', {
@@ -115,7 +129,11 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
         startsOn: form.get('start') || null,
         maxBranches: form.get('maxBranches') ? Number(form.get('maxBranches')) : null,
         maxUsers: form.get('maxUsers') ? Number(form.get('maxUsers')) : null,
-        expiresAt: expiry ? new Date(expiry + 'T' + String(form.get('time')) + ':00Z').toISOString() : null,
+        expiresAt: expiry && time
+          ? expiry === previousExpiry.date && time === previousExpiry.time
+            ? restaurant.expires_at
+            : new Date(`${expiry}T${time}:00+05:30`).toISOString()
+          : null,
         reason: form.get('reason'),
       });
       const updated = await platformRequest<Subscription[]>('/tenants', token);
@@ -203,10 +221,10 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
             </Field>
           </div>
           <div className="form-grid">
-            <Field label="Subscription start date (UTC)" error={error instanceof ApiError ? error.fieldErrors.startsOn : undefined}>
+            <Field label="Subscription start date (IST)" error={error instanceof ApiError ? error.fieldErrors.startsOn : undefined}>
               <input name="startsOn" type="date" required />
             </Field>
-            <Field label="Subscription end date (UTC)" hint="Access is available through the end of this date." error={error instanceof ApiError ? error.fieldErrors.endsOn : undefined}>
+            <Field label="Subscription end date (IST)" hint="Access is available through the end of this date." error={error instanceof ApiError ? error.fieldErrors.endsOn : undefined}>
               <input name="endsOn" type="date" required />
             </Field>
           </div>
@@ -226,7 +244,7 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
           <tbody>{visible.slice(currentPage * 10, (currentPage + 1) * 10).map(row => <tr key={row.id}>
             <td><strong>{row.name}</strong><small>{row.slug}{row.is_demo ? ' · Sample' : ''}</small></td><td>{row.plan}</td>
             <td>{row.access_status}</td><td>Branches: {row.max_branches ?? 'Unlimited'}<br />Users: {row.max_users ?? 'Unlimited'}</td><td><div>{row.starts_on ? 'Starts ' + row.starts_on : 'No start date'}</div>
-              <div>{row.expires_at ? 'Expires ' + row.expires_at.slice(0, 16).replace('T', ' ') + ' UTC' : 'No expiry'}</div></td>
+              <div>{row.expires_at ? 'Expires ' + indiaDateTime.format(new Date(row.expires_at)) + ' IST' : 'No expiry'}</div></td>
             <td className="platform-row-actions"><Button className="secondary" disabled={busy} onClick={() => show(row)}>Subscription</Button><Button className="subtle" disabled={busy} onClick={() => setDetails(row)}>Details</Button>
               <Button className="subtle" disabled={busy} onClick={() => { setError(undefined); setConfirmation(''); setDeleting(row); }}>Delete</Button></td>
           </tr>)}</tbody>
@@ -247,11 +265,11 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
             <Field label="Status"><select name="status" defaultValue={selected.status}>
               <option value="ACTIVE">Active</option><option value="TRIAL">Trial</option><option value="SUSPENDED">Deactivated</option>
             </select></Field>
-            <Field label="Start date (UTC)"><input name="start" type="date" defaultValue={selected.starts_on || ''} /></Field>
+            <Field label="Start date (IST)"><input name="start" type="date" defaultValue={selected.starts_on || ''} /></Field>
             <Field label="Branch limit"><input name="maxBranches" type="number" min={1} max={1000} defaultValue={selected.max_branches ?? ''} placeholder="Unlimited" /></Field>
             <Field label="User limit"><input name="maxUsers" type="number" min={1} max={10000} defaultValue={selected.max_users ?? ''} placeholder="Unlimited" /></Field>
-            <Field label="Expiry date (UTC)"><input name="expiry" type="date" defaultValue={selected.expires_at?.slice(0, 10)} /></Field>
-            <Field label="Expiry time (UTC)"><input name="time" type="time" defaultValue={selected.expires_at?.slice(11, 16) || '23:59'} required /></Field>
+            <Field label="Expiry date (IST)"><input name="expiry" type="date" defaultValue={indiaExpiryFields(selected.expires_at).date} /></Field>
+            <Field label="Expiry time (IST)"><input name="time" type="time" defaultValue={indiaExpiryFields(selected.expires_at).time} required /></Field>
           </div>
           <Field label="Reason for change"><textarea name="reason" required maxLength={500} /></Field>
           <Button busy={busy}>Save subscription</Button>
@@ -260,7 +278,7 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
         <h2>Change history</h2>
         {history.length ? <ul>{history.map(entry => <li key={entry.id}>
           <strong>{entry.new_value.plan} / {entry.new_value.status}</strong> {entry.reason}
-          <p className="muted">{entry.operator_email} · {new Date(entry.changed_at).toLocaleString()}</p>
+          <p className="muted">{entry.operator_email} · {new Date(entry.changed_at).toLocaleString('en-IN', { timeZone: indiaTimeZone })} IST</p>
         </li>)}</ul> : <p className="muted">No changes recorded.</p>}
       </section>}
     </>}
