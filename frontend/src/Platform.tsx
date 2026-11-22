@@ -87,8 +87,11 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
     const form = event.currentTarget;
     const fields = Object.fromEntries(new FormData(form));
     const payload = {
-      ...fields,
-      slug: String(fields.slug).trim().toLowerCase(),
+      businessName: String(fields.businessName || '').trim(),
+      slug: String(fields.slug || '').trim().toLowerCase(),
+      name: String(fields.name || '').trim(),
+      email: String(fields.email || '').trim().toLowerCase(),
+      password: String(fields.password || ''),
       maxBranches: Number(fields.maxBranches),
       maxUsers: Number(fields.maxUsers),
       startsOn: fields.startsOn ? String(fields.startsOn).trim() : null,
@@ -228,10 +231,10 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
           </div>
           <div className="form-grid">
             <Field label="Subscription start date (IST)" error={error instanceof ApiError ? error.fieldErrors.startsOn : undefined}>
-              <input name="startsOn" type="date" required />
+              <input name="startsOn" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required />
             </Field>
             <Field label="Subscription end date (IST)" hint="Access is available through the end of this date." error={error instanceof ApiError ? error.fieldErrors.endsOn : undefined}>
-              <input name="endsOn" type="date" required />
+              <input name="endsOn" type="date" defaultValue={new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)} required />
             </Field>
           </div>
           <Button busy={busy}>Create restaurant</Button>

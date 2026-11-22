@@ -1,5 +1,6 @@
 package com.restaurant.pos;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -49,11 +50,12 @@ public class PlatformController {
             @NotBlank @Size(min=12,max=72) String password,
             @jakarta.validation.constraints.NotNull @Min(1) @Max(1000) Integer maxBranches,
             @jakarta.validation.constraints.NotNull @Min(1) @Max(10000) Integer maxUsers,
-            LocalDate startsOn, LocalDate endsOn) {}
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate startsOn,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate endsOn) {}
     record DeleteRestaurant(@NotBlank @Size(max=64) String confirmSlug) {}
     record Subscription(@NotBlank @Size(max = 80) String plan,
                         @NotBlank @Pattern(regexp = "ACTIVE|TRIAL|SUSPENDED") String status,
-                        LocalDate startsOn,
+                        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate startsOn,
                         Instant expiresAt,
                         @Min(1) @Max(1000) Integer maxBranches,
                         @Min(1) @Max(10000) Integer maxUsers,
