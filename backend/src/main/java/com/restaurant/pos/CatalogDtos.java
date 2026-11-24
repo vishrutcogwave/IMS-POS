@@ -43,8 +43,13 @@ public final class CatalogDtos {
             @NotNull @Size(max=30) List<@NotNull @Valid Option> variants,
             @NotNull @Size(max=30) List<@NotNull @Valid Option> modifiers, UUID unitId, UUID taxId) {}
     public record PriceChange(@NotNull UUID itemId,
-            @NotNull @DecimalMin("0") @Digits(integer=10,fraction=2) BigDecimal expectedPrice,
-            @NotNull @DecimalMin("0") @Digits(integer=10,fraction=2) BigDecimal price) {}
+            @DecimalMin("0") @Digits(integer=10,fraction=2) BigDecimal expectedPrice,
+            @DecimalMin("0") @Digits(integer=10,fraction=2) BigDecimal price,
+            Boolean expectedAvailable, Boolean available) {
+        public PriceChange(UUID itemId,BigDecimal expectedPrice,BigDecimal price) {
+            this(itemId,expectedPrice,price,null,null);
+        }
+    }
     public record OutletPrices(@NotNull UUID outletId,
             @NotNull @Size(min=1,max=200) List<@NotNull @Valid PriceChange> changes) {}
     public record Table(@NotNull UUID outletId, @NotBlank @Size(max=40) String name,

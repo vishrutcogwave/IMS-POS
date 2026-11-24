@@ -78,6 +78,10 @@ public sealed class TrayApp : ApplicationContext
             ContextMenuStrip = _menu,
         };
         _notifyIcon.DoubleClick += (_, _) => ShowKeyForm();
+        _notifyIcon.MouseClick += (_, args) =>
+        {
+            if (args.Button == MouseButtons.Left) ShowKeyForm();
+        };
         _host.LastResultChanged += (_, _) => _ui?.Post(_ => RefreshMenu(), null);
         RefreshMenu();
         ShowBalloon("Print bridge is running. Open the tray icon to copy the bridge key.");
@@ -107,6 +111,11 @@ public sealed class TrayApp : ApplicationContext
         _notifyIcon.Text = string.IsNullOrWhiteSpace(printer)
             ? "POS Print Bridge - no printer"
             : "POS Print Bridge";
+    }
+
+    public void ShowKeyWindow()
+    {
+        ShowKeyForm();
     }
 
     private void ShowKeyForm()

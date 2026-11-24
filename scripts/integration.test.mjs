@@ -160,6 +160,16 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     assert.equal((await ok(a, url, updates, 'PUT')).updated, 1);
     assert.equal((await ok(a, url, updates, 'PUT')).updated, 0);
     assert.equal((await ok(a, url, { ...updates, changes: [{ itemId: itemA.id, expectedPrice: 105, price: 100 }] }, 'PUT')).updated, 1);
+    const unavailable = { outletId: outlet.id, changes: [{ itemId: itemA.id, expectedAvailable: true, available: false }] };
+    assert.equal((await ok(a, url, unavailable, 'PUT')).updated, 1);
+    assert.equal((await ok(a, '/catalog?outletId=' + outlet.id)).items.find(row => row.id === itemA.id).available, false);
+    assert.equal((await request(a, url, unavailable, 'PUT')).status, 409);
+    const restored = { outletId: outlet.id, changes: [{ itemId: itemA.id, expectedPrice: 100, price: 103, expectedAvailable: false, available: true }] };
+    assert.equal((await ok(a, url, restored, 'PUT')).updated, 1);
+    const final = (await ok(a, '/catalog?outletId=' + outlet.id)).items.find(row => row.id === itemA.id);
+    assert.equal(Number(final.price), 103);
+    assert.equal(final.available, true);
+    assert.equal((await ok(a, url, { outletId: outlet.id, changes: [{ itemId: itemA.id, expectedPrice: 103, price: 100 }] }, 'PUT')).updated, 1);
   });
   await t.test('outlet item imports preview and create only dependent menu masters', async () => {
     const row = { row: 2, name: 'Excel test ' + suffix, category: 'Import category', group: 'Import group', department: 'Pantry', description: '',
@@ -399,6 +409,19 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     const inactive = await ok(a, '/settings/stewards', { outletId: outlet.id, name: 'Inactive QA Steward', active: false });
     const other = await ok(a, '/settings/stewards', { outletId: secondOutlet.id, name: 'Other Outlet Steward', active: true });
     denied(await request(b, '/settings/stewards', { outletId: outlet.id, name: 'Cross-tenant steward', active: true }));
+    const draftTable = await ok(a, '/settings/tables', { outletId: outlet.id, name: 'Waiter-only ' + suffix, section: 'Dining', seats: 2 });
+    const draftRequest = { outletId: outlet.id, serviceMode: 'DINE_IN', tableId: draftTable.id, covers: 2, notes: '', customerName: '', stewardId: steward.id };
+    let draft = await ok(a, '/orders', draftRequest);
+    assert.equal(draft.status, 'DRAFT');
+    assert.equal((await ok(a, '/catalog?outletId=' + outlet.id)).tables.find(row => row.id === draftTable.id).active_order_id, null);
+    assert.ok(!(await ok(a, '/orders?outletId=' + outlet.id)).some(row => row.id === draft.id));
+    const reopenedDraft = await ok(a, '/orders', draftRequest);
+    assert.equal(reopenedDraft.id, draft.id, 'reopening a waiter-only table should reuse its empty draft');
+    draft = await ok(a, `/orders/${draft.id}/items`, { version: reopenedDraft.version, menuItemId: itemA.id, quantity: 1, variant: '', modifiers: [], notes: '' });
+    assert.equal(draft.status, 'OPEN');
+    const occupiedDraftTable = (await ok(a, '/catalog?outletId=' + outlet.id)).tables.find(row => row.id === draftTable.id);
+    assert.equal(occupiedDraftTable.active_order_id, draft.id);
+    assert.equal(occupiedDraftTable.order_status, 'OPEN');
     const orderInput = { outletId: outlet.id, serviceMode: 'DINE_IN', tableId: table.id, covers: 2, notes: 'Verification only', customerName: '' };
     denied(await request(a, '/orders', { ...orderInput, stewardId: inactive.id }), [422]);
     denied(await request(a, '/orders', { ...orderInput, stewardId: other.id }), [422]);
@@ -408,11 +431,14 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     assert.equal((await ok(a, '/orders/' + order.id)).waiter_name, 'QA Waiter');
     assert.match(order.order_number, /^ORD-/);
     assert.equal(order.waiter_name, 'QA Waiter');
+    assert.equal(order.status, 'DRAFT');
     const openOrders = await ok(a, '/orders?outletId=' + outlet.id);
-    assert.equal(openOrders.find(row => row.id === order.id).order_number, order.order_number);
-    denied(await request(a, '/orders', { outletId: outlet.id, serviceMode: 'DINE_IN', tableId: table.id, covers: 2, notes: '', customerName: '' }), [409]);
+    assert.ok(!openOrders.some(row => row.id === order.id));
     denied(await request(a, '/orders', { outletId: outlet.id, serviceMode: 'DELIVERY', covers: 1, notes: '', customerName: '' }), [400,422]);
     order = await ok(a, `/orders/${order.id}/items`, { version: order.version, menuItemId: itemA.id, quantity: 2, variant: '', modifiers: [], notes: 'Less spicy' });
+    assert.equal(order.status, 'OPEN');
+    assert.equal((await ok(a, '/catalog?outletId=' + outlet.id)).tables.find(row => row.id === table.id).active_order_id, order.id);
+    denied(await request(a, '/orders', { outletId: outlet.id, serviceMode: 'DINE_IN', tableId: table.id, covers: 2, notes: '', customerName: '' }), [409]);
     const oldVersion = order.version;
     order = await ok(a, `/orders/${order.id}/items`, { version: order.version, menuItemId: itemB.id, quantity: 1, variant: '', modifiers: [], notes: '' });
     denied(await request(a, `/orders/${order.id}/items`, { version: oldVersion, menuItemId: itemA.id, quantity: 1, variant: '', modifiers: [], notes: '' }), [409]);
@@ -464,6 +490,9 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     assert.equal(order.bills.length, 2);
     assert.equal(Math.round(order.bills.reduce((sum, x) => sum + Number(x.total), 0) * 100), 28350);
     assert.equal(order.status, 'BILL_PENDING');
+    const tableStatus = (await ok(a, '/catalog?outletId=' + outlet.id)).tables.find(row => row.id === table.id);
+    assert.equal(tableStatus.active_order_id, order.id);
+    assert.equal(tableStatus.order_status, 'BILL_PENDING');
   });
   await t.test('settlement rejects imbalance, is exactly once, and releases table only after all splits', async () => {
     const first = await ok(a, `/bills/${order.bills[0].id}`);
@@ -473,6 +502,14 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     assert.equal(first.change, undefined);
     const billList = await ok(a, '/bills?outletId=' + outlet.id);
     assert.equal(billList.find(bill => bill.id === first.id).bill_number, first.bill_number);
+    const previews = (await ok(a, '/printing/jobs?outletId=' + outlet.id)).filter(job =>
+      job.document_type === 'BILL_PREVIEW' && order.bills.some(bill => bill.id === job.reference_id));
+    assert.equal(previews.length, 4, 'each of the two split bills should print once to each selected receipt printer');
+    for (const bill of order.bills) {
+      const billPreviews = previews.filter(job => job.reference_id === bill.id);
+      assert.deepEqual(billPreviews.map(job => job.printer_id).sort(), [receipt.id, secondReceipt.id].sort());
+      assert.ok(billPreviews.every(job => job.payload.title === 'BILL PREVIEW' && job.payload.payments.length === 0));
+    }
     const tickets = (await ok(a, '/kots?outletId=' + outlet.id)).filter(ticket => ticket.order_id === order.id);
     assert.equal(tickets.length, 2);
     assert.ok(tickets.every(ticket => /^KOT-/.test(ticket.kot_number)));
@@ -544,10 +581,12 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     const fresh = await ok(a, '/settings/tables', { outletId: outlet.id, name: 'Concurrent', section: 'Dining', seats: 2 });
     const body = { outletId: outlet.id, serviceMode: 'DINE_IN', tableId: fresh.id, covers: 1, notes: '', customerName: '' };
     const results = await Promise.all([request(a, '/orders', body), request(a, '/orders', body)]);
-    assert.equal(results.filter(r => r.status >= 200 && r.status < 300).length, 1);
-    assert.equal(results.filter(r => r.status === 409).length, 1);
-    const created = results.find(r => r.status >= 200 && r.status < 300).data;
-    await ok(a, `/orders/${created.id}/cancel`, { version: created.version, reason: 'Concurrency verification finished' });
+    assert.ok(results.every(r => r.status >= 200 && r.status < 300), JSON.stringify(results.map(r => ({ status: r.status, data: r.data }))));
+    const created = results[0].data;
+    assert.equal(results[1].data.id, created.id, 'concurrent opens of an empty waiter table must reuse the same draft');
+    assert.equal(created.status, 'DRAFT');
+    const current = await ok(a, `/orders/${created.id}`);
+    await ok(a, `/orders/${created.id}/cancel`, { version: current.version, reason: 'Concurrency verification finished' });
   });
   await t.test('reports/export are real, tenant scoped and restricted to assigned outlets', async () => {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -555,7 +594,7 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     const dashboard = await ok(a, `/dashboard?${query}`);
     assert.equal(Number(dashboard.sales), 283.5);
     assert.equal(Number(dashboard.billCount), 2);
-    for (const type of ['daily-sales','item-sales','category-sales','outlet-sales','payments','payment-details','kot-register','nc-kots','kot-cancellations','bill-reprints','bill-cancellations','bill-modifications','table-activity','tax-settlement']) {
+    for (const type of ['daily-sales','item-sales','category-sales','outlet-sales','payments','payment-details','chance-sheet','kot-register','nc-kots','kot-cancellations','bill-reprints','bill-cancellations','bill-modifications','table-activity','tax-settlement']) {
       const report = await ok(a, `/reports/${type}?${query}&page=0&size=10`);
       assert.ok(Array.isArray(report.rows), `${type} rows`);
       assert.ok(Number.isFinite(Number(report.totalElements)), `${type} pagination`);
@@ -582,15 +621,26 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     assert.equal(kotExport.status,200);
     assert.match(kotExport.data,/name: Test/);
     assert.ok(!kotExport.data.includes('[{'));
-    const outletReport = await ok(a, '/reports/outlet-sales?' + query + '&size=200');
+    const branchId = (await ok(a, '/catalog?outletId=' + outlet.id)).outlet.branch_id;
+    const outletReport = await ok(a, `/reports/outlet-sales?branchId=${branchId}&from=${today}&to=${today}&size=200`);
     assert.equal(Number(outletReport.rows.find(row => row.outlet_id === outlet.id).total), 283.5);
     assert.equal(Number(outletReport.rows.find(row => row.outlet_id === secondOutlet.id).total), 0);
     assert.ok(!outletReport.rows.some(row => row.outlet_id === b.data.outlets[0].id));
+    const selectedChance = await ok(a, '/reports/chance-sheet?' + query + '&size=200');
+    assert.equal(selectedChance.outletSummary.length, 1);
+    assert.equal(selectedChance.outletSummary[0].name, outlet.name);
+    assert.ok(selectedChance.rows.every(row => row.outlet === outlet.name));
+    assert.ok(selectedChance.paymentSummary.some(row => row.method === 'CASH'));
+    const branchChance = await ok(a, `/reports/chance-sheet?branchId=${branchId}&from=${today}&to=${today}&size=200`);
+    assert.ok(branchChance.outletSummary.some(row => row.name === outlet.name));
+    assert.ok(branchChance.outletSummary.some(row => row.name === secondOutlet.name));
+    assert.ok(branchChance.outletSummary.every(row => row.name !== b.data.outlets[0].name));
     const accountantEmail = 'accountant-' + suffix + '@saffron.test';
     await ok(a, '/settings/users', { name: 'Verification accountant', email: accountantEmail, password, role: 'ACCOUNTANT', outletIds: [outlet.id] });
     const accountant = await login(testStore.slug, accountantEmail, password);
     const restricted = await ok(accountant, '/reports/outlet-sales?' + query);
     assert.deepEqual(restricted.rows.map(row => row.outlet_id), [outlet.id]);
+    denied(await request(accountant, `/reports/chance-sheet?branchId=ALL&from=${today}&to=${today}`), [403]);
     const csv = await request(a, `/reports/daily-sales/export?${query}`);
     assert.equal(csv.status, 200); assert.match(csv.headers.get('content-type'), /csv/);
     denied(await request(b, `/reports/daily-sales/export?${query}`));
@@ -783,27 +833,43 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
 
       const group = await ok(a,'/orders/'+first.id+'/bills',{version:first.version},'POST',smokeIOS);
       const bill = group.bills.find(row => row.status==='OPEN');
+      const previewClaim = await deviceCall('claim');
+      const [previewJob] = previewClaim.jobs;
+      assert.equal(previewJob.document_type,'BILL_PREVIEW');
+      assert.equal(previewJob.payload.title,'BILL PREVIEW');
+      assert.equal(previewJob.payload.payments.length,0);
+      assert.equal((Date.parse(previewJob.expires_at)-Date.parse(previewJob.created_at))/3600000,24);
+      await deviceCall('start',{jobId:previewJob.id,claimToken:previewJob.claim_token,plan});
+      await deviceCall('result',{jobId:previewJob.id,claimToken:previewJob.claim_token,status:'PRINTED',deliveries:{'test-delivery':'PRINTED'}});
       await ok(a,'/bills/'+bill.id+'/settle',{version:bill.version,cashTendered:100,payments:[{method:'CASH',amount:100,reference:''}]},'POST',smokeIOS);
       const {jobs:[billJob]} = await deviceCall('claim');
       assert.equal(billJob.document_type,'BILL');
+      assert.equal(billJob.payload.title,'RECEIPT');
+      assert.equal(billJob.payload.payments[0].method,'CASH');
       assert.equal((Date.parse(billJob.expires_at)-Date.parse(billJob.created_at))/3600000,24);
       await deviceCall('start',{jobId:billJob.id,claimToken:billJob.claim_token,plan});
+      await deviceCall('result',{jobId:billJob.id,claimToken:billJob.claim_token,status:'PRINTED',deliveries:{'test-delivery':'PRINTED'}});
 
+      const uncertainOrder = await create('Crash after print start',smokeAndroid);
+      const uncertainClaim = await deviceCall('claim');
+      const [uncertainJob] = uncertainClaim.jobs;
+      assert.equal(uncertainJob.document_type,'KOT');
+      await deviceCall('start',{jobId:uncertainJob.id,claimToken:uncertainJob.claim_token,plan});
       const stale = await create('Expired KOT',smokeAndroid);
       const staleStatus = await ok(a,statusPath+'?orderId='+stale.id);
       assert.equal(staleStatus.jobs[0].status,'QUEUED');
       await database("update print_pcs set last_seen_at=now()-interval '1 minute' where id=$1",[pcId]);
       assert.equal((await ok(a,statusPath)).online,false);
       await database("update print_jobs set expires_at=now()-interval '1 second' where id=$1",[staleStatus.jobs[0].id]);
-      await database("update print_jobs set claimed_at=now()-interval '121 seconds' where id=$1",[billJob.id]);
+      await database("update print_jobs set claimed_at=now()-interval '121 seconds' where id=$1",[uncertainJob.id]);
       const deadline = Date.now()+24000;
       do {
         status = await ok(a,statusPath);
-        if (status.jobs.find(row => row.id===billJob.id)?.status==='NEEDS_REVIEW' &&
+        if (status.jobs.find(row => row.id===uncertainJob.id)?.status==='NEEDS_REVIEW' &&
             status.jobs.find(row => row.id===staleStatus.jobs[0].id)?.status==='FAILED') break;
         await new Promise(resolve => setTimeout(resolve,1000));
       } while (Date.now()<deadline);
-      assert.equal(status.jobs.find(row => row.id===billJob.id).status,'NEEDS_REVIEW');
+      assert.equal(status.jobs.find(row => row.id===uncertainJob.id).status,'NEEDS_REVIEW');
       assert.equal(status.jobs.find(row => row.id===staleStatus.jobs[0].id).status,'FAILED');
       assert.equal((await deviceCall('claim')).jobs.length,0);
       assert.equal((await ok(a,statusPath)).online,true);

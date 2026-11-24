@@ -46,7 +46,7 @@ export async function dispatchPcPrint(config: Connection, job: ClaimedJob): Prom
   const installed = new Map(status.printers.map(name => [name.toLowerCase(), name]));
   const linesByPrinter = new Map<string, PrintLine[]>();
   const isKot = job.document_type === 'KOT' || job.document_type === 'KOT_CANCEL';
-  const isBill = job.document_type === 'BILL' || job.document_type === 'BILL_CANCEL';
+  const isBill = job.document_type?.startsWith('BILL') ?? false;
   const billPrinters = isBill && config.bills.length ? config.bills : [''];
   const lines = job.payload.lines;
   const routes = isKot && lines?.length

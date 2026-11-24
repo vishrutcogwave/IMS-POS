@@ -28,3 +28,10 @@ test('bill renders cent-accurate totals and cancellation references', () => {
   const text = render({ ...job, document_type: 'BILL_CANCEL', payload: { ...job.payload, title: 'CANCELLED BILL', subtotal: 280, discount: 10, tax: 13.5, total: 283.5, originalReference: 'B-00001', reason: 'Guest cancellation' } }).toString('ascii');
   assert.match(text, /283\.50/); assert.match(text, /13\.50/); assert.match(text, /Original: B-00001/); assert.match(text, /Guest cancellation/);
 });
+test('pre-settlement bill is marked due and does not show payment details', () => {
+  const text = render({ ...job, document_type: 'BILL_PREVIEW', paper_width: 80, payload: { ...job.payload, title: 'BILL PREVIEW', reference: 'B-00002', subtotal: 220, discount: 0, tax: 11, total: 231, payments: [] } }).toString('ascii');
+  assert.match(text, /BILL - PAYMENT DUE/);
+  assert.match(text, /Unpaid Bill/);
+  assert.match(text, /231\.00/);
+  assert.doesNotMatch(text, /Paid|Cash tendered|Change/);
+});

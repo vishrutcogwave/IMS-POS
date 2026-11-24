@@ -72,7 +72,7 @@ export const api = {
     request<MenuImportPreview>('/settings/items/import/preview', 'POST', { outletId, rows }),
   confirmMenuImport: (outletId: ID, rows: MenuImportRow[]) =>
     request<{ imported: number }>('/settings/items/import/confirm', 'POST', { outletId, rows }),
-  outletPrices: (body: { outletId: ID; changes: { itemId: ID; expectedPrice: number; price: number }[] }) =>
+  outletPrices: (body: { outletId: ID; changes: { itemId: ID; expectedPrice?: number; price?: number; expectedAvailable?: boolean; available?: boolean }[] }) =>
     request<{ updated: number }>('/settings/items/prices', 'PUT', body),
   saveSetup: <K extends SetupKind>(kind: K, body: SetupInputs[K], id?: ID) => request<{ id?: ID; ok?: boolean }>(`/settings/${kind}${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', body),
   routes: (outletId: ID, routes: { categoryId: ID; printerId: ID }[]) => request<{ ok: boolean }>('/settings/routes', 'PUT', { outletId, routes }),
@@ -111,7 +111,6 @@ export const api = {
   testPrinter: (id: ID) => request<PrintJob>(`/printing/printers/${id}/test`, 'POST', {}),
   retryJob: (id: ID, reason: string) => request<PrintJob>(`/printing/jobs/${id}/retry`, 'POST', { reason }),
   preview: (outletId: ID, items: { menuItemId: ID; quantity: number }[]) => request<RoutingPreview>('/printing/preview', 'POST', { outletId, items }),
-  dashboard: (outletId: ID, range: DateRange) => request<Dashboard>(`/dashboard${query({ outletId, ...range })}`),
-  report: (type: ReportType, outletId: ID, range: DateRange, page: number) => request<Report>(`/reports/${type}${query({ outletId, ...range, page, size: 25 })}`),
-  exportReport: (type: ReportType, outletId: ID, range: DateRange) => request<Blob>(`/reports/${type}/export${query({ outletId, ...range })}`, 'GET', undefined, undefined, true),
+  dashboard: (branchId: ID | 'ALL', range: DateRange) => request<Dashboard>(`/dashboard${query({ branchId, ...range })}`),
+  report: (type: ReportType, branchId: ID | 'ALL', outletId: ID | undefined, range: DateRange, page: number, size = 25) => request<Report>(`/reports/${type}${query({ branchId, outletId, ...range, page, size })}`),
 };

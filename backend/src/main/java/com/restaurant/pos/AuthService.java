@@ -130,12 +130,17 @@ public class AuthService {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("user", Map.of("id", actor.userId(), "name", actor.name(), "email", actor.email(), "role", actor.role(), "permissions", actor.permissions()));
             result.put("tenant", db.one("select id,slug,name,receipt_address,tax_number,phone,receipt_footer from tenants where id=?", actor.tenantId()));
+            result.put("branches", accessibleBranches(actor));
             result.put("outlets", accessibleOutlets(actor));
             result.put("csrfToken", csrf);
             return result;
         });
     }
 
+    public List<Map<String, Object>> accessibleBranches(Actor actor) {
+        return db.list("select b.id,b.name from branches b where b.tenant_id=? and (?='OWNER' or exists (select 1 from outlets o join user_outlets access on access.tenant_id=o.tenant_id and access.outlet_id=o.id where o.tenant_id=b.tenant_id and o.branch_id=b.id and access.user_id=?)) order by b.name,b.id",
+                actor.tenantId(), actor.role(), actor.userId());
+    }
     public List<Map<String, Object>> accessibleOutlets(Actor actor) {
         return db.list("select o.*,b.name as branch_name from outlets o join branches b on b.tenant_id=o.tenant_id and b.id=o.branch_id where o.tenant_id=? and (?='OWNER' or exists (select 1 from user_outlets u where u.tenant_id=o.tenant_id and u.outlet_id=o.id and u.user_id=?)) order by b.name,o.name",
                 actor.tenantId(), actor.role(), actor.userId());

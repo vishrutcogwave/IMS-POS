@@ -20,7 +20,7 @@ public class OperationsSupport {
     static void version(Map<String,Object> row, Integer version) {
         if(version==null || integer(row.get("version"))!=version) throw new ApiException(409,"The record changed. Refresh before trying again.");
     }
-    static void open(Map<String,Object> order) { if(!"OPEN".equals(order.get("status"))) throw new ApiException(409,"Only an open order can be edited"); }
+    static void open(Map<String,Object> order) { if(!Set.of("DRAFT","OPEN").contains(text(order.get("status")))) throw new ApiException(409,"Only a draft or open order can be edited"); }
     public Map<String,Object> outlet(Actor a,UUID outlet) {
         db.outlet(a,outlet);
         return db.one("select * from outlets where tenant_id=? and id=?",a.tenantId(),outlet);

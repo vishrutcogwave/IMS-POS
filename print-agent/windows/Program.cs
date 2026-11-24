@@ -5,7 +5,7 @@ namespace RestaurantPos.PrintBridge;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         using var singleInstance = new Mutex(true, @"Local\PosPrintBridge", out var isFirstInstance);
         if (!isFirstInstance)
@@ -70,6 +70,10 @@ internal static class Program
         Log.Write($"Bridge started. Config: {BridgeConfig.ConfigPath}");
 
         using var tray = new TrayApp(host);
+        if (!args.Contains("--autostart", StringComparer.OrdinalIgnoreCase))
+        {
+            tray.ShowKeyWindow();
+        }
         Application.Run(tray);
 
         host.StopAsync().GetAwaiter().GetResult();

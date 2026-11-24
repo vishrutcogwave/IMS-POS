@@ -140,6 +140,11 @@ public class PrintingService {
                 reason,a.tenantId(),outlet,bill);
     }
 
+    void supersedePendingBillPreviews(Actor a,UUID outlet,UUID bill,String reason) {
+        db.update("update print_jobs set status='FAILED',error=?,completed_at=now() where tenant_id=? and outlet_id=? and document_type='BILL_PREVIEW' and reference_id=? and status='PENDING'",
+                reason,a.tenantId(),outlet,bill);
+    }
+
     Map<String,Object> reprint(Actor a,UUID outlet,String type,UUID reference,String reason) {
         reason(reason);
         Map<String,Object> original="BILL".equals(type) ? currentBillReceipt(a,outlet,reference) : original(a,outlet,type,reference);

@@ -11,24 +11,28 @@ if not exist "%~dp0PosPrintBridge.exe" (
 )
 if not exist "%installDir%\." mkdir "%installDir%"
 if not exist "%installDir%\." goto failed
+taskkill /IM PosPrintBridge.exe /F >nul 2>&1
+timeout /t 2 /nobreak >nul
 copy /y "%~dp0PosPrintBridge.exe" "%bridge%" >nul
 if errorlevel 1 (
-    echo If POS Print Bridge is already open, exit it from the notification area and retry.
+    echo Could not replace the bridge. Close any other POS Print Bridge session and retry.
     goto failed
 )
 reg add "%runKey%" /v PosPrintBridge /t REG_SZ /d "\"%bridge%\" --autostart" /f >nul
 if errorlevel 1 goto failed
 start "" "%bridge%"
 if errorlevel 1 goto failed
-echo POS Print Bridge installed. Copy its key from the Windows notification area.
+echo POS Print Bridge installed. Its key window is open; use Copy to pair this PC.
 pause
 exit /b 0
 
 :uninstall
+taskkill /IM PosPrintBridge.exe /F >nul 2>&1
+timeout /t 2 /nobreak >nul
 if exist "%bridge%" (
     del "%bridge%"
     if exist "%bridge%" (
-        echo Exit POS Print Bridge from the notification area before uninstalling.
+        echo Could not remove the bridge executable. Retry after closing the running bridge.
         goto failed
     )
 )

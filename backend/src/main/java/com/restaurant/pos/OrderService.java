@@ -19,7 +19,7 @@ public class OrderService {
         else if("all".equalsIgnoreCase(status)) filter="";
         else {
             String value=status.toUpperCase(Locale.ROOT);
-            if(!Set.of("OPEN","BILL_PENDING","SETTLED","CANCELLED").contains(value)) throw new ApiException(400,"Invalid order status filter");
+            if(!Set.of("DRAFT","OPEN","BILL_PENDING","SETTLED","CANCELLED").contains(value)) throw new ApiException(400,"Invalid order status filter");
             filter=" and o.status='"+value+"'";
         }
         List<Map<String,Object>> orders=db.list("select o.*,o.number as order_number,t.name as table_name from orders o left join restaurant_tables t on t.tenant_id=o.tenant_id and t.outlet_id=o.outlet_id and t.id=o.table_id where o.tenant_id=? and o.outlet_id=?"+filter+" order by o.created_at desc,o.id",a.tenantId(),outlet);
@@ -63,8 +63,17 @@ public class OrderService {
                     Map.of("stewardId","This steward is unavailable for the selected outlet."));
             stewardName=text(stewards.getFirst().get("name"));
         }
+        if(request.tableId()!=null) {
+            List<Map<String,Object>> drafts=db.list("select id from orders where tenant_id=? and outlet_id=? and table_id=? and status='DRAFT' order by created_at,id limit 1 for update",a.tenantId(),request.outletId(),request.tableId());
+            if(!drafts.isEmpty()) {
+                UUID draft=id(drafts.getFirst());
+                db.update("update orders set covers=?,notes=?,customer_name=?,waiter_name=?,version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",request.covers(),text(request.notes()),text(request.customerName()),stewardName,a.tenantId(),request.outletId(),draft);
+                db.audit(a,request.outletId(),"ORDER_DRAFT_UPDATE","ORDER",draft,"",Map.of("table_id",request.tableId().toString(),"waiter_name",stewardName));
+                return detail(a,draft);
+            }
+        }
         UUID order=UUID.randomUUID(); String number=support.number(a,request.outletId(),"ORD");
-        db.update("insert into orders(id,tenant_id,outlet_id,table_id,number,service_mode,covers,notes,customer_name,waiter_name,created_by) values(?,?,?,?,?,?,?,?,?,?,?)",order,a.tenantId(),request.outletId(),request.tableId(),number,request.serviceMode(),request.covers(),text(request.notes()),text(request.customerName()),stewardName,a.userId());
+        db.update("insert into orders(id,tenant_id,outlet_id,table_id,number,service_mode,covers,notes,customer_name,waiter_name,created_by,status) values(?,?,?,?,?,?,?,?,?,?,?,'DRAFT')",order,a.tenantId(),request.outletId(),request.tableId(),number,request.serviceMode(),request.covers(),text(request.notes()),text(request.customerName()),stewardName,a.userId());
         db.audit(a,request.outletId(),"ORDER_CREATE","ORDER",order,"",Map.of("number",number,"table_id",request.tableId()==null?"":request.tableId().toString()));
         return detail(a,order);
     }
@@ -74,6 +83,11 @@ public class OrderService {
     }
     public Map<String,Object> add(Actor a,UUID orderId,OperationsDtos.AddItem request) {
         Map<String,Object> order=support.order(a,orderId,true); version(order,request.version()); open(order); UUID outlet=id(order.get("outlet_id"));
+        if("DRAFT".equals(order.get("status")) && order.get("table_id")!=null) {
+            UUID table=id(order.get("table_id"));
+            db.one("select id from restaurant_tables where tenant_id=? and outlet_id=? and id=? for update",a.tenantId(),outlet,table);
+            availableTable(a,outlet,table,orderId);
+        }
         if(support.lines(a,order,false).size()>=500) throw new ApiException(422,"An order can contain at most 500 distinct lines");
         Map<String,Object> menu=support.menu(a,outlet,request.menuItemId());
         if(!Boolean.TRUE.equals(menu.get("available"))) throw new ApiException(422,"Menu item is unavailable");
@@ -88,6 +102,7 @@ public class OrderService {
         }
         price=OperationsMoney.money(price);
         db.update("insert into order_items(id,tenant_id,order_id,menu_item_id,category_id,name,quantity,unit_price,tax_rate,variant,modifiers,notes) values(?,?,?,?,?,?,?,?,?,?,?::jsonb,?)",UUID.randomUUID(),a.tenantId(),orderId,request.menuItemId(),id(menu.get("category_id")),menu.get("name"),request.quantity(),price,menu.get("tax_rate"),variant,db.json(modifiers),text(request.notes()));
+        if("DRAFT".equals(order.get("status"))) db.update("update orders set status='OPEN' where tenant_id=? and outlet_id=? and id=? and status='DRAFT'",a.tenantId(),outlet,orderId);
         support.assertDiscount(a,order); support.bump(a,order); return detail(a,orderId);
     }
     private BigDecimal choice(List<Map<String,Object>> choices,String name,String type) {
@@ -339,7 +354,7 @@ public class OrderService {
     }
     public Map<String,Object> cancel(Actor a,UUID orderId,OperationsDtos.Cancel request) {
         reason(request.reason()); Map<String,Object> order=support.order(a,orderId,true); version(order,request.version()); UUID outlet=id(order.get("outlet_id"));
-        if(!Set.of("OPEN","BILL_PENDING").contains(text(order.get("status")))) throw new ApiException(409,"Order cannot be cancelled in its current state");
+        if(!Set.of("DRAFT","OPEN","BILL_PENDING").contains(text(order.get("status")))) throw new ApiException(409,"Order cannot be cancelled in its current state");
         List<Map<String,Object>> bills=db.list("select * from bills where tenant_id=? and outlet_id=? and order_id=? and status<>'CANCELLED' order by id for update",a.tenantId(),outlet,orderId);
         if(bills.stream().anyMatch(b -> "PAID".equals(b.get("status")))) throw new ApiException(409,"Paid refunds and reversals are not supported");
         for(Map<String,Object> kot:db.list("select * from kots where tenant_id=? and outlet_id=? and order_id=? and status<>'CANCELLED' order by id for update",a.tenantId(),outlet,orderId)) cancelWholeKot(a,order,kot,request.reason());

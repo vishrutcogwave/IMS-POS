@@ -31,7 +31,7 @@ const roleDescriptions: Record<Role, string> = {
 };
 export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) => void }) {
   const { outletId, can, session, refreshSession, navigate } = useWorkspace(); const format = useMoney(); const state = useLoad(api.settings, []); const [tab, setTab] = useState<SettingsTab>('outlets');
-  const [edit, setEdit] = useState<{ kind: SetupKind; entity?: SetupEntity; categoryId?: string; groupId?: string } | null>(null); const [prices, setPrices] = useState(false);
+  const [edit, setEdit] = useState<{ kind: SetupKind; entity?: SetupEntity; categoryId?: string; groupId?: string } | null>(null); const [prices, setPrices] = useState(false); const [itemMaster, setItemMaster] = useState(false);
   const [itemCategory, setItemCategory] = useState('');
   const [groupId, setGroupId] = useState('');
   const data = state.data;
@@ -99,7 +99,8 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
     {tab === 'items' && selectedOutlet && <section className="card">
       <div className="section-heading"><div><h2>Items</h2><p>Menu for {selectedOutlet.name}</p></div>
         <div className="heading-actions">
-          <Button className="secondary" onClick={() => setPrices(true)} disabled={!items.length}>Bulk prices</Button>
+          <Button className="secondary" onClick={() => setItemMaster(true)} disabled={!items.length}>Outlet rate & status</Button>
+          <Button className="secondary" onClick={() => setPrices(true)} disabled={!items.length}>Bulk price adjustment</Button>
           <Button onClick={() => open('items', undefined, selectedCategory?.id)} disabled={!selectedCategory}><Plus size={16} />Add item</Button>
         </div>
       </div>
@@ -133,6 +134,7 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
     {(tab === 'stewards' || tab === 'nc-departments') && selectedOutlet && <NamedOutletMaster key={outletId + tab}
       kind={tab} outletId={outletId} entries={scoped(tab === 'stewards' ? data.stewards : data.ncDepartments)} onSaved={saved} />}
     {prices && <OutletPriceDialog key={outletId} outletId={outletId} categories={scoped(data.categories)} items={scoped(data.items)} onClose={() => setPrices(false)} onSaved={saved} />}
+    {itemMaster && <OutletItemMasterDialog key={outletId} outletId={outletId} categories={categories} items={items} onClose={() => setItemMaster(false)} onSaved={saved} />}
     {edit && <SetupDialog key={`${edit.kind}-${edit.entity?.id || 'new'}`} kind={edit.kind} entity={edit.entity} categoryId={edit.categoryId} groupId={edit.groupId} data={data} onClose={() => setEdit(null)} onSaved={setupSaved} />}
   </>}</div>;
 }
@@ -281,6 +283,129 @@ function SetupDialog({ kind, entity, categoryId, groupId, data, onClose, onSaved
     {kind === 'printers' && <><div className="form-grid">{text('deviceKey', 'Local device alias', { pattern: '[A-Za-z0-9_-]+', hint: 'A local alias such as kitchen or receipt. No host address or executable.' })}{select('documentType', 'Document type', [{ id: 'KOT', name: 'KOT printer' }, { id: 'BILL', name: 'Receipts' }, { id: 'BOTH', name: 'KOT and bill printer' }])}{select('paperWidth', 'Paper width', [{ id: '58', name: '58 mm' }, { id: '80', name: '80 mm' }])}{text('copies', 'Copies per job', { type: 'number', min: 1, max: 5, step: '1' })}</div>{text('template', 'Receipt / ticket template', { hint: 'Template identifier used by your local print agent, e.g. STANDARD.' })}<div className="form-grid">{toggle('enabled', 'Printer is enabled')}{toggle('isFallback', 'KOT fallback for unmapped categories')}{toggle('isReceipt', 'Print bills on this printer')}</div><div className="notice warning">An enabled receipt printer is required to settle a bill. Configuration alone does not connect or test a physical device; use the Print queue to queue a test.</div></>}
   </fieldset>{action.feedback}<div className="modal-actions"><Button type="button" className="subtle" onClick={onClose} disabled={action.busy}>Back</Button><Button busy={action.busy} disabled={action.blocked}><Save size={16} />{entity ? 'Save changes' : `Create ${singular[kind]}`}</Button></div></form></Modal>;
 }
+function OutletItemMasterDialog({ outletId, categories, items, onClose, onSaved }: {
+  outletId: string; categories: Category[]; items: MenuItem[]; onClose: () => void; onSaved: () => Promise<void>;
+}) {
+  const [category, setCategory] = useState('all');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
+  const [availabilityDraft, setAvailabilityDraft] = useState<Record<string, boolean>>({});
+  const [bulkMode, setBulkMode] = useState('amount');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkAvailability, setBulkAvailability] = useState('keep');
+  const format = useMoney();
+  const { outlet } = useWorkspace();
+  const action = useAction(onClose);
+  const visible = items.filter(item => (category === 'all' || item.category_id === category) &&
+    `${item.name} ${categories.find(row => row.id === item.category_id)?.name || ''}`.toLowerCase().includes(search.toLowerCase()));
+  const chosen = items.filter(item => selected.has(item.id));
+  const changes = chosen.flatMap(item => {
+    const oldPrice = number(item.price);
+    const rawPrice = priceDraft[item.id] ?? String(item.price);
+    const nextPrice = rawPrice.trim() === '' ? Number.NaN : Number(rawPrice);
+    const oldAvailable = item.available;
+    const nextAvailable = availabilityDraft[item.id] ?? oldAvailable;
+    const priceChanged = Number.isFinite(nextPrice) && Math.round(nextPrice * 100) !== Math.round(oldPrice * 100);
+    const statusChanged = nextAvailable !== oldAvailable;
+    if (!priceChanged && !statusChanged) return [];
+    return [{ itemId: item.id, name: item.name, oldPrice, nextPrice, oldAvailable, nextAvailable,
+      ...(priceChanged ? { expectedPrice: oldPrice, price: nextPrice } : {}),
+      ...(statusChanged ? { expectedAvailable: oldAvailable, available: nextAvailable } : {}) }];
+  });
+  const invalidPrice = chosen.some(item => {
+    const raw = priceDraft[item.id];
+    if (raw === undefined || raw.trim() === '') return false;
+    const value = Number(raw);
+    return !Number.isFinite(value) || value < 0 || value > 9999999999.99;
+  });
+  const applyBulk = () => {
+    if (!chosen.length) return;
+    const hasRateChange = !!bulkValue.trim();
+    const amount = hasRateChange ? Number(bulkValue) : 0;
+    if (hasRateChange && !Number.isFinite(amount)) return;
+    if (hasRateChange) setPriceDraft(previous => {
+      const next = { ...previous };
+      for (const item of chosen) {
+        const price = number(item.price);
+        const value = bulkMode === 'exact' ? amount : bulkMode === 'percent'
+          ? Math.round(price * (1 + amount / 100) * 100) / 100
+          : Math.round((price + amount) * 100) / 100;
+        next[item.id] = String(value);
+      }
+      return next;
+    });
+    if (bulkAvailability !== 'keep') setAvailabilityDraft(previous => ({
+      ...previous, ...Object.fromEntries(chosen.map(item => [item.id, bulkAvailability === 'active'])),
+    }));
+  };
+  const toggleSelected = (id: string, checked: boolean) => setSelected(previous => {
+    const next = new Set(previous);
+    if (checked) next.add(id); else next.delete(id);
+    return next;
+  });
+  const selectVisible = (checked: boolean) => setSelected(previous => {
+    const next = new Set(previous);
+    for (const item of visible) if (checked) next.add(item.id); else next.delete(item.id);
+    return next;
+  });
+  const valid = changes.length > 0 && changes.length <= 200 && !invalidPrice && changes.every(row =>
+    (!('price' in row) || (row.nextPrice >= 0 && row.nextPrice <= 9999999999.99)));
+  return <Modal title="Outlet item rates & availability" subtitle={`${outlet?.name} · changes apply only to this outlet`} onClose={onClose} wide noClose={action.busy}>
+    <form onSubmit={event => {
+      event.preventDefault();
+      if (!valid) return;
+      void action.run(async () => {
+        await api.outletPrices({ outletId, changes: changes.map(({ itemId, expectedPrice, price, expectedAvailable, available }) =>
+          ({ itemId, ...(expectedPrice !== undefined ? { expectedPrice, price } : {}),
+            ...(expectedAvailable !== undefined ? { expectedAvailable, available } : {}) })) });
+        await onSaved();
+        onClose();
+      });
+    }}>
+      <fieldset disabled={action.blocked}>
+        <div className="form-grid">
+          <Field label="Category"><select value={category} onChange={event => setCategory(event.target.value)}>
+            <option value="all">All categories</option>{categories.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+          </select></Field>
+          <Field label="Find item"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search item or category" /></Field>
+        </div>
+        <div className="card section-card">
+          <div className="section-heading"><div><h3>Bulk update selected</h3><p>{selected.size} selected · choose exact rate or an adjustment, then optionally set availability.</p></div></div>
+          <div className="form-grid">
+            <Field label="Rate change"><select value={bulkMode} onChange={event => setBulkMode(event.target.value)}>
+              <option value="amount">Add / reduce amount</option><option value="percent">Increase / reduce percent</option><option value="exact">Set exact rate</option>
+            </select></Field>
+            <Field label={bulkMode === 'percent' ? 'Percentage' : 'Amount (INR)'}><input type="number" step="0.01" value={bulkValue} onChange={event => setBulkValue(event.target.value)} /></Field>
+            <Field label="Availability"><select value={bulkAvailability} onChange={event => setBulkAvailability(event.target.value)}>
+              <option value="keep">Keep current status</option><option value="active">Set active</option><option value="inactive">Set inactive</option>
+            </select></Field>
+          </div>
+          <Button type="button" className="secondary" onClick={applyBulk} disabled={!chosen.length || !bulkValue.trim() && bulkAvailability === 'keep'}>Apply to selected</Button>
+        </div>
+        {selected.size > 200 && <p className="notice error">Select no more than 200 items per save. Filter by category to make smaller batches.</p>}
+        {invalidPrice && <p className="notice error">Rates must be valid amounts between ₹0 and ₹9,999,999,999.99.</p>}
+        {!!changes.length && <p className="notice info">Previewing changes for {changes.length} selected item{changes.length === 1 ? '' : 's'}.</p>}
+        <div className="table-scroll"><table className="data-table">
+          <thead><tr><th><input type="checkbox" aria-label="Select visible items" checked={visible.length > 0 && visible.every(item => selected.has(item.id))} onChange={event => selectVisible(event.target.checked)} /></th><th>Item</th><th>Current rate</th><th>New rate</th><th>Active</th></tr></thead>
+          <tbody>{visible.map(item => <tr key={item.id}>
+            <td><input type="checkbox" aria-label={`Select ${item.name}`} checked={selected.has(item.id)} onChange={event => toggleSelected(item.id,event.target.checked)} /></td>
+            <td><strong>{item.name}</strong><small>{categories.find(row => row.id === item.category_id)?.name}</small></td>
+            <td>{format(item.price)}</td>
+            <td><input aria-label={`New rate for ${item.name}`} type="number" min="0" max="9999999999.99" step="0.01" value={priceDraft[item.id] ?? String(item.price)} onChange={event => { setPriceDraft(previous => ({ ...previous,[item.id]:event.target.value })); setSelected(previous => new Set(previous).add(item.id)); }} /></td>
+            <td><CheckField label="Active" checked={availabilityDraft[item.id] ?? item.available} onChange={checked => { setAvailabilityDraft(previous => ({ ...previous,[item.id]:checked })); setSelected(previous => new Set(previous).add(item.id)); }} /></td>
+          </tr>)}</tbody>
+        </table></div>
+        {!visible.length && <Empty title="No matching items" text="Choose another category or search term." />}
+      </fieldset>
+      {action.feedback}
+      <div className="modal-actions"><Button type="button" className="secondary" onClick={onClose}>Cancel</Button>
+        <Button type="submit" busy={action.busy} disabled={!valid || action.blocked}>Save {changes.length || ''} item changes</Button>
+      </div>
+    </form>
+  </Modal>;
+}
+
 function OutletPriceDialog({ outletId, categories, items, onClose, onSaved }: {
   outletId: string; categories: Category[]; items: MenuItem[]; onClose: () => void; onSaved: () => Promise<void>;
 }) {

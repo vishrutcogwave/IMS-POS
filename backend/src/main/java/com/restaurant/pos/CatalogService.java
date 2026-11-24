@@ -126,23 +126,41 @@ public class CatalogService {
             for (var change : input.changes()) {
                 if (!seen.add(change.itemId())) throw new ApiException(422, "Each menu item can appear only once.");
                 var current = db.one("""
-                        select price, name, coalesce((select sum((m->>'price')::numeric)
+                        select price,available,name,coalesce((select sum((m->>'price')::numeric)
                             from jsonb_array_elements(modifiers) m),0) as extras
                         from menu_items where tenant_id=? and outlet_id=? and id=? for update
                         """, actor.tenantId(), input.outletId(), change.itemId());
                 BigDecimal price = (BigDecimal) current.get("price");
-                if (price.compareTo(change.price()) == 0) continue;
-                if (price.compareTo(change.expectedPrice()) != 0) {
-                    throw new ApiException(409, "Price changed for " + current.get("name") + ". Refresh and preview prices again.");
+                boolean available = Boolean.TRUE.equals(current.get("available"));
+                boolean changesPrice = change.price() != null;
+                boolean changesAvailability = change.available() != null;
+                if (changesPrice != (change.expectedPrice() != null) || changesAvailability != (change.expectedAvailable() != null) || (!changesPrice && !changesAvailability))
+                    throw new ApiException(422,"For each selected item, provide both the current and new value for every field being changed.");
+                boolean priceConflict=changesPrice && price.compareTo(change.expectedPrice()) != 0;
+                boolean availabilityConflict=changesAvailability && available != change.expectedAvailable();
+                if (priceConflict || availabilityConflict) {
+                    // Price-only requests can be retried safely after a lost response.
+                    // Availability changes must still reject stale state to avoid
+                    // silently overwriting an operator's newer availability choice.
+                    boolean alreadyApplied=changesPrice && !changesAvailability
+                            && price.compareTo(change.price()) == 0;
+                    if (alreadyApplied) continue;
+                    if (priceConflict) throw new ApiException(409, "Price changed for " + current.get("name") + ". Refresh and preview prices again.");
+                    throw new ApiException(409,"Availability changed for " + current.get("name") + ". Refresh and apply your change again.");
                 }
-                if (change.price().add((BigDecimal) current.get("extras")).compareTo(new BigDecimal("9999999999.99")) > 0) {
+                BigDecimal nextPrice = changesPrice ? change.price() : price;
+                boolean nextAvailable = changesAvailability ? change.available() : available;
+                if (changesPrice && nextPrice.add((BigDecimal) current.get("extras")).compareTo(new BigDecimal("9999999999.99")) > 0) {
                     throw new ApiException(422, "Base price plus modifiers is too high for " + current.get("name") + ".");
                 }
-                db.update("update menu_items set price=? where tenant_id=? and outlet_id=? and id=?",
-                        change.price(), actor.tenantId(), input.outletId(), change.itemId());
-                db.audit(actor, input.outletId(), "ITEM_PRICE_UPDATE", "MENU_ITEM", change.itemId(), "",
-                        Map.of("oldPrice", price, "newPrice", change.price()));
-                changed++;
+                if(price.compareTo(nextPrice)!=0 || available!=nextAvailable) {
+                    db.update("update menu_items set price=?,available=? where tenant_id=? and outlet_id=? and id=?",
+                            nextPrice,nextAvailable,actor.tenantId(),input.outletId(),change.itemId());
+                    String event=changesPrice && changesAvailability ? "ITEM_MASTER_UPDATE" : changesPrice ? "ITEM_PRICE_UPDATE" : "ITEM_AVAILABILITY_UPDATE";
+                    db.audit(actor,input.outletId(),event,"MENU_ITEM",change.itemId(),"",
+                            Map.of("oldPrice",price,"newPrice",nextPrice,"oldAvailable",available,"newAvailable",nextAvailable));
+                    changed++;
+                }
             }
             return Map.of("updated", changed);
         });
@@ -169,7 +187,7 @@ public class CatalogService {
                         throw new ApiException(409, "Remove branch user assignments from this outlet before moving it.");
                     }
                 }
-                List<Map<String, Object>> active = db.list("select service_mode from orders where tenant_id=? and outlet_id=? and status in ('OPEN','BILL_PENDING')", actor.tenantId(), id);
+                List<Map<String, Object>> active = db.list("select service_mode from orders where tenant_id=? and outlet_id=? and status in ('DRAFT','OPEN','BILL_PENDING')", actor.tenantId(), id);
                 for (Map<String, Object> order : active) if (!input.serviceModes().contains(order.get("service_mode"))) throw new ApiException(409, "A service mode cannot be removed while it has active orders.");
                 if (!active.isEmpty() && (!input.currency().equals(previous.get("currency"))
                         || !input.timezone().equals(previous.get("timezone"))
@@ -361,7 +379,7 @@ public class CatalogService {
                     saved, actor.tenantId(), input.outletId(), input.name().strip(), input.section() == null || input.section().isBlank() ? "Tables" : input.section().strip(), input.seats());
             else {
                 entity(actor, "restaurant_tables", id, input.outletId(), true);
-                if (!db.list("select id from orders where tenant_id=? and outlet_id=? and table_id=? and status in ('OPEN','BILL_PENDING')", actor.tenantId(), input.outletId(), id).isEmpty()) {
+                if (!db.list("select id from orders where tenant_id=? and outlet_id=? and table_id=? and status in ('DRAFT','OPEN','BILL_PENDING')", actor.tenantId(), input.outletId(), id).isEmpty()) {
                     throw new ApiException(409, "An occupied table cannot be edited. Settle or transfer its order first.");
                 }
                 db.update("update restaurant_tables set name=?,section=?,seats=? where tenant_id=? and outlet_id=? and id=?",

@@ -5,8 +5,8 @@ export type Role = 'OWNER' | 'MANAGER' | 'CASHIER' | 'WAITER' | 'KITCHEN' | 'ACC
 export interface Tenant { id: ID; name: string; slug: string; receipt_address?: string; tax_number?: string; phone?: string; receipt_footer?: string }
 export interface User { id: ID; name: string; email: string; role: Role; permissions: Permission[]; permitted_actions?: Permission[] | null; outlet_ids?: ID[]; active?: boolean }
 export interface Branch { id: ID; name: string; address?: string }
-export interface Outlet { id: ID; branch_id: ID; name: string; service_modes: string[]; payment_methods: string[]; currency: string; timezone: string; default_print_pc?: string | null }
-export interface Session { user: User; tenant: Tenant; outlets: Outlet[]; csrfToken: string }
+export interface Outlet { id: ID; branch_id: ID; branch_name?: string; name: string; service_modes: string[]; payment_methods: string[]; currency: string; timezone: string; default_print_pc?: string | null }
+export interface Session { user: User; tenant: Tenant; branches?: Branch[]; outlets: Outlet[]; csrfToken: string }
 export interface MenuGroup { id: ID; outlet_id: ID; name: string }
 export interface Category { id: ID; outlet_id: ID; group_id: ID; name: string; department: string; sort_order: number }
 export interface PriceOption { name: string; price: Amount }
@@ -36,10 +36,10 @@ export interface Bill { print_job_ids?: ID[]; id: ID; non_chargeable?: boolean; 
 export interface PrintJob { id: ID; printer_name?: string; device_key?: string; status: string; document_type?: string; job_type?: string; reference?: string; attempts: number; created_at: string; error?: string; last_error?: string }
 export interface RoutingPreview { groups: { printer: Printer | string; items: { name?: string; menuItemId?: ID; menu_item_id?: ID; quantity: number }[] }[]; unmapped: (MenuItem | string)[] }
 export interface PaymentModeTotal { method: string; total: Amount; payment_count?: number; bill_count?: number }
-export interface Dashboard { sales: Amount; subtotal?: Amount; discount?: Amount; tax?: Amount; billCount: number; averageBill: Amount; activeTables: number; activeOrders: number; payments: PaymentModeTotal[]; topItems: { name: string; quantity: number; total: Amount }[]; topCategories: { name: string; total: Amount }[]; outlets: { name: string; total: Amount }[]; daily: { date: string; total: Amount }[] }
-export const reportTypes = ['daily-sales', 'item-sales', 'category-sales', 'outlet-sales', 'payments', 'payment-details', 'kot-register', 'nc-kots', 'kot-cancellations', 'bill-reprints', 'bill-cancellations', 'bill-modifications', 'table-activity', 'tax-settlement'] as const;
+export interface Dashboard { sales: Amount; subtotal?: Amount; discount?: Amount; tax?: Amount; billCount: number; averageBill: Amount; activeTables: number; activeOrders: number; payments: PaymentModeTotal[]; topItems: { name: string; quantity: number; total: Amount }[]; topCategories: { name: string; total: Amount }[]; branches: { name: string; total: Amount }[]; daily: { date: string; total: Amount }[] }
+export const reportTypes = ['daily-sales', 'item-sales', 'category-sales', 'branch-sales', 'outlet-sales', 'chance-sheet', 'payment-details', 'kot-register', 'nc-kots', 'kot-cancellations', 'bill-reprints', 'bill-cancellations', 'bill-modifications', 'table-activity', 'tax-settlement'] as const;
 export type ReportType = typeof reportTypes[number];
-export interface Report { paymentModes?: PaymentModeTotal[]; rows: Record<string, unknown>[]; totalElements: number; page: number; size: number; totals: Record<string, Amount> }
+export interface Report { paymentModes?: PaymentModeTotal[]; outletSummary?: Record<string, unknown>[]; paymentSummary?: Record<string, unknown>[]; rows: Record<string, unknown>[]; totalElements: number; page: number; size: number; totals: Record<string, Amount> }
 export interface DateRange { from: string; to: string }
 export interface CreateOrder { outletId: ID; serviceMode: string; tableId?: ID; covers: number; notes: string; customerName: string; waiterName?: string; stewardId?: ID }
 export interface AddItem { version: number; menuItemId: ID; quantity: number; variant: string; modifiers: string[]; notes: string }

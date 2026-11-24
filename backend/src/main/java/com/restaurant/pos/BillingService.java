@@ -63,17 +63,25 @@ public class BillingService {
         if(request.ncBill() && (request.groups()!=null || lines.stream().anyMatch(line -> !Boolean.TRUE.equals(line.get("non_chargeable")))))
             throw new ApiException(422,"An NC bill requires a single bill containing only items sent on NC KOTs.");
         List<List<Map<String,Object>>> groups=split(priced,request.groups());
+        List<Map<String,Object>> receiptPrinters=printing.receiptPrinters(a,outlet);
+        List<UUID> previewJobIds=new ArrayList<>();
         for(List<Map<String,Object>> group:groups) {
             boolean nc=group.stream().allMatch(line -> Boolean.TRUE.equals(line.get("non_chargeable")));
             Map<String,Object> totals=OperationsMoney.totals(group); UUID bill=UUID.randomUUID(); String number=support.billNumber(a,outlet,nc);
             db.update("insert into bills(id,tenant_id,outlet_id,order_id,number,subtotal,discount,tax,total,non_chargeable) values(?,?,?,?,?,?,?,?,?,?)",bill,a.tenantId(),outlet,orderId,number,totals.get("subtotal"),totals.get("discount"),totals.get("tax"),totals.get("total"),nc);
             for(Map<String,Object> line:group) db.update("insert into bill_items(id,tenant_id,bill_id,order_item_id,quantity,snapshot) values(?,?,?,?,?,?::jsonb)",UUID.randomUUID(),a.tenantId(),bill,id(line),line.get("quantity"),db.json(line));
+            Map<String,Object> preview=printing.payload(a,order,nc?"NC BILL PREVIEW":"BILL PREVIEW",number,group);
+            for(String key:List.of("subtotal","discount","tax","total")) preview.put(key,totals.get(key));
+            preview.put("billId",bill); preview.put("billStatus","UNPAID"); preview.put("payments",List.of());
+            for(Map<String,Object> printer:receiptPrinters)
+                previewJobIds.add(id(printing.enqueue(a,outlet,id(printer),"BILL_PREVIEW",bill,null,preview)));
             db.audit(a,outlet,"BILL_CREATE","BILL",bill,"",Map.of("order_id",orderId,"number",number,"totals",totals));
         }
         db.update("update orders set status='BILL_PENDING',version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",a.tenantId(),outlet,orderId);
-        return orders.detail(a,orderId);
+        Map<String,Object> result=orders.detail(a,orderId);
+        result.put("bill_preview_print_job_ids",previewJobIds);
+        return result;
     }
-
     /** Split canonical whole-line tax/discount cents, preserving exactly the unsplit order total. */
     static List<List<Map<String,Object>>> split(List<Map<String,Object>> priced,List<OperationsDtos.BillGroup> requested) {
         if(requested==null) return List.of(priced);
@@ -223,6 +231,7 @@ public class BillingService {
         if(siblings.stream().anyMatch(b -> "PAID".equals(b.get("status")))) throw new ApiException(409,"A sibling bill was paid. Refunds/reversals are not implemented; the order cannot reopen.");
         for(Map<String,Object> sibling:siblings) {
             db.update("update bills set status='CANCELLED',reason=?,version=version+1 where tenant_id=? and outlet_id=? and order_id=? and id=?",request.reason(),a.tenantId(),outlet,id(bill.get("order_id")),id(sibling));
+            printing.supersedePendingBillPreviews(a,outlet,id(sibling),"Bill cancelled before settlement");
             db.audit(a,outlet,"BILL_CANCEL","BILL",id(sibling),request.reason(),Map.of("order_id",bill.get("order_id"),"number",sibling.get("number"),"total",sibling.get("total"),"requested_bill_id",billId));
         }
         db.update("update orders set status='OPEN',version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",a.tenantId(),outlet,id(bill.get("order_id")));
