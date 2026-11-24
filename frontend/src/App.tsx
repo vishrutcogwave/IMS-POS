@@ -102,7 +102,7 @@ export default function App() {
   const navigate = (to: Navigation) => { setLocation(to); setMobileNav(false); setSearchOpen(false); };
   const refreshSession = async () => acceptSession(await api.me());
   const renderPage = () => {
-    if (allBranches && !['dashboard','reports','profile'].includes(page)) return <div className="page"><Empty title="Choose one branch to continue" text="Floor, bills, and printing actions work within one hotel branch at a time. Select a branch from the top menu." /></div>;
+    if (allBranches && !['dashboard','reports','profile','floor'].includes(page)) return <div className="page"><Empty title="Choose one branch to continue" text="Floor, bills, and printing actions work within one hotel branch at a time. Select a branch from the top menu." /></div>;
     if (page === 'profile') return <Profile />;
     if (page === 'settings') return <SettingsPage onOutletChange={setOutletId} />;
     if (page === 'utility') return <PrintUtilityPage />;

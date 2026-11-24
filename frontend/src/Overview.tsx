@@ -23,11 +23,17 @@ export function DashboardPage() {
 
 export function TablesPage() {
   const { session, branchId, branchName, selectOutlet, navigate, can } = useWorkspace();
-  const branchOutlets = session.outlets.filter(outlet => outlet.branch_id === branchId);
+  const branchOutlets = branchId === 'ALL'
+    ? session.outlets
+    : session.outlets.filter(outlet => outlet.branch_id === branchId);
+  const [activeOutletId, setActiveOutletId] = useState<string>('ALL');
   const outletKey = branchOutlets.map(outlet => outlet.id).join(',');
   const state = useLoad(() => Promise.all(branchOutlets.map(async outlet => ({ outlet, catalog: await api.catalog(outlet.id) }))), [branchId, outletKey]);
   const [search, setSearch] = useState('');
-  const outletTables = (state.data ?? []).map(({ outlet, catalog }) => ({ outlet, tables: catalog.tables.filter(table => table.name.toLowerCase().includes(search.toLowerCase())) }));
+  const outletTables = (state.data ?? []).map(({ outlet, catalog }) => ({
+    outlet,
+    tables: catalog.tables.filter(table => table.name.toLowerCase().includes(search.toLowerCase())),
+  }));
   const allTables = outletTables.flatMap(group => group.tables);
   const { loading, reload } = state;
   useEffect(() => {
@@ -41,12 +47,26 @@ export function TablesPage() {
     };
   }, [loading, reload]);
 
+  const displayedGroups = outletTables.filter(group => activeOutletId === 'ALL' || group.outlet.id === activeOutletId);
+  const displayedTables = displayedGroups.flatMap(group => group.tables);
+
   return <div className="page"><PageHeader title="Tables" description={`Outlets and tables in ${branchName}.`} actions={<Refresh onClick={state.reload} busy={state.loading} />} />
     {!branchOutlets.length && !state.loading && !state.error ? <Empty title="No outlets in this branch" text="This branch has no service outlets assigned to your login. Ask the owner to add an outlet or update your outlet access in Masters." action={can('SETTINGS') ? <Button onClick={() => navigate({ page: 'settings' })}>Open Masters <ArrowRight size={17} /></Button> : undefined} /> : <>
-      <div className="floor-summary"><div><span className="status-dot available" /><strong>{allTables.filter(table => !table.active_order_id).length}</strong> available</div><div><span className="status-dot occupied" /><strong>{allTables.filter(table => table.active_order_id).length}</strong> in service</div><div><Users size={16} /><strong>{allTables.reduce((sum, table) => sum + table.seats, 0)}</strong> configured seats</div></div>
-      <div className="toolbar"><div className="search-box"><Search size={17} /><input aria-label="Find a table in this branch" placeholder="Find a table…" value={search} onChange={event => setSearch(event.target.value)} /></div></div>
-      {state.error ? <LoadError error={state.error} retry={state.reload} /> : state.loading && !state.data ? <Loading text="Loading branch outlets and tables…" /> : outletTables.map(({ outlet, tables }) => <section className="branch-floor-outlet" key={outlet.id}><div className="section-heading"><div><h2>{outlet.name}</h2><p>{tables.length} {tables.length === 1 ? 'table' : 'tables'} · {outlet.service_modes?.map(label).join(' · ') || 'Service outlet'}</p></div><Button className="secondary" onClick={() => { selectOutlet(outlet.id); navigate({ page: 'settings' }); }}>Manage outlet</Button></div>{tables.length ? <div className="table-grid">{tables.map(table => <button key={table.id} className={`floor-table ${table.active_order_id ? 'in-service' : ''}`} onClick={() => { selectOutlet(outlet.id); navigate({ page: 'pos', ...(table.active_order_id ? { orderId: table.active_order_id } : { tableId: table.id }) }); }}><div className="table-card-top"><span className={`status-dot ${table.active_order_id ? 'occupied' : 'available'}`} /></div><div className="table-diagram" aria-hidden="true"><span className="seat top" /><span className="seat left" /><span className="table-surface" /><span className="seat right" /><span className="seat bottom" /></div><strong className="table-name">{table.name}</strong><div className="table-card-bottom"><span><Users size={14} /> {table.seats} seats</span><Badge status={table.active_order_id ? table.order_status || 'OPEN' : 'AVAILABLE'}>{table.order_status === 'BILL_PENDING' ? 'Settlement pending' : undefined}</Badge></div><span className="table-action">{table.active_order_id ? table.order_status === 'BILL_PENDING' ? 'Settle bill' : 'Resume order' : 'Seat your guests'} <ArrowRight size={15} /></span></button>)}</div> : <p className="muted branch-floor-empty">{search ? 'No table in this outlet matches your search.' : 'No tables configured for this outlet yet.'}</p>}</section>)}
-      {!state.loading && !state.error && branchOutlets.length > 0 && allTables.length === 0 && search && <Empty title="No matching tables" text="Try another table name." />}
+      <div className="floor-summary"><div><span className="status-dot available" /><strong>{displayedTables.filter(table => !table.active_order_id).length}</strong> available</div><div><span className="status-dot occupied" /><strong>{displayedTables.filter(table => table.active_order_id).length}</strong> in service</div><div><Users size={16} /><strong>{displayedTables.reduce((sum, table) => sum + table.seats, 0)}</strong> configured seats</div></div>
+      <div className="toolbar"><div className="search-box"><Search size={17} /><input aria-label="Find a table" placeholder="Find a table…" value={search} onChange={event => setSearch(event.target.value)} /></div></div>
+      {branchOutlets.length > 1 && <div className="tabs floor-outlet-tabs" aria-label="Filter by outlet">
+        <button type="button" className={activeOutletId === 'ALL' ? 'active' : ''} onClick={() => setActiveOutletId('ALL')}>
+          All outlets <span>{allTables.length}</span>
+        </button>
+        {branchOutlets.map(outlet => {
+          const count = outletTables.find(group => group.outlet.id === outlet.id)?.tables.length ?? 0;
+          return <button key={outlet.id} type="button" className={activeOutletId === outlet.id ? 'active' : ''} onClick={() => setActiveOutletId(outlet.id)}>
+            {outlet.name} {branchId === 'ALL' && outlet.branch_name ? `(${outlet.branch_name})` : ''} <span>{count}</span>
+          </button>;
+        })}
+      </div>}
+      {state.error ? <LoadError error={state.error} retry={state.reload} /> : state.loading && !state.data ? <Loading text="Loading outlets and tables…" /> : displayedGroups.map(({ outlet, tables }) => <section className="branch-floor-outlet" key={outlet.id}><div className="section-heading"><div><h2>{outlet.name} {branchId === 'ALL' && outlet.branch_name ? <small className="muted"> · {outlet.branch_name}</small> : null}</h2><p>{tables.length} {tables.length === 1 ? 'table' : 'tables'} · {outlet.service_modes?.map(label).join(' · ') || 'Service outlet'}</p></div></div>{tables.length ? <div className="table-grid">{tables.map(table => <button key={table.id} className={`floor-table ${table.active_order_id ? 'in-service' : ''}`} onClick={() => { selectOutlet(outlet.id); navigate({ page: 'pos', ...(table.active_order_id ? { orderId: table.active_order_id } : { tableId: table.id }) }); }}><div className="table-card-top"><span className={`status-dot ${table.active_order_id ? 'occupied' : 'available'}`} /></div><div className="table-diagram" aria-hidden="true"><span className="seat top" /><span className="seat left" /><span className="table-surface" /><span className="seat right" /><span className="seat bottom" /></div><strong className="table-name">{table.name}</strong><div className="table-card-bottom"><span><Users size={14} /> {table.seats} seats</span><Badge status={table.active_order_id ? table.order_status || 'OPEN' : 'AVAILABLE'}>{table.order_status === 'BILL_PENDING' ? 'Settlement pending' : undefined}</Badge></div><span className="table-action">{table.active_order_id ? table.order_status === 'BILL_PENDING' ? 'Settle bill' : 'Resume order' : 'Seat your guests'} <ArrowRight size={15} /></span></button>)}</div> : <p className="muted branch-floor-empty">{search ? 'No table in this outlet matches your search.' : 'No tables configured for this outlet yet.'}</p>}</section>)}
+      {!state.loading && !state.error && branchOutlets.length > 0 && displayedTables.length === 0 && search && <Empty title="No matching tables" text="Try another table name." />}
     </>}
   </div>;
 }
