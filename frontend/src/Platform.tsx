@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ClipboardList, LogOut, Store, UserRoundCog } from 'lucide-react';
-import { Button, Field, Modal, ValidationIssues } from './ui';
+import { ApiErrorDetails, Button, Field, Modal, ValidationIssues } from './ui';
 import { ApiError } from './api';
 import { Brand } from './Brand';
 import { Accounts, Audit, PlatformContact, PropertyDetails, type Property } from './PlatformOperations';
@@ -33,19 +33,24 @@ function indiaExpiryFields(expiresAt: string | null) {
 }
 
 export async function platformRequest<T>(path: string, token = '', method = 'GET', body?: object): Promise<T> {
-  const response = await fetch('/api/platform' + path, {
-    method,
-    headers: {
-      ...(token ? { Authorization: 'Bearer ' + token } : {}),
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    cache: 'no-store',
-    redirect: 'error',
-  });
+  let response: Response;
+  try {
+    response = await fetch('/api/platform' + path, {
+      method,
+      headers: {
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: 'no-store',
+      redirect: 'error',
+    });
+  } catch {
+    throw new ApiError(`The server could not be reached for ${method} /platform${path}.`, 0, 'NETWORK_ERROR', undefined, {}, method, '/platform' + path);
+  }
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new ApiError(error.message || 'The platform request failed.', response.status, error.code, error.requestId, error.fieldErrors);
+    throw new ApiError(error.message || 'The platform request failed.', response.status, error.code, error.requestId, error.fieldErrors, method, '/platform' + path);
   }
   return response.json() as Promise<T>;
 }
@@ -182,7 +187,7 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
         <div><div className="eyebrow">Platform administration</div><h1>{tabs.find(tab => tab.id === page)?.label}</h1></div>
         {page === 'stores' && <Button className="secondary" onClick={() => setContact(true)}>Platform contact</Button>}
       </header>
-    {error && !deleting && <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /></div></div>}
+    {error && !deleting && <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /><ApiErrorDetails error={error} /></div></div>}
     {message && <p className="notice success" role="status">{message}</p>}
     {page === 'accounts' && <Accounts properties={restaurants} token={token} />}
     {page === 'audit' && <Audit properties={restaurants} token={token} />}
@@ -195,7 +200,7 @@ export default function Platform({ token, onSignOut }: { token: string; onSignOu
           <input value={confirmation} onChange={event => setConfirmation(event.target.value)}
             required autoComplete="off" disabled={busy} />
         </Field>
-        {error && <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /></div></div>}
+        {error && <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /><ApiErrorDetails error={error} /></div></div>}
         <div className="modal-actions">
           <Button type="button" className="subtle" disabled={busy} onClick={() => setDeleting(undefined)}>Keep restaurant</Button>
           <Button className="danger" busy={busy} disabled={confirmation !== deleting.slug}>Delete permanently</Button>

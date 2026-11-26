@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, Field, Modal, ValidationIssues } from './ui';
+import { ApiErrorDetails, Button, Field, Modal, ValidationIssues } from './ui';
 import { platformRequest } from './Platform';
 
 export type Property = { id: string; name: string; slug: string };
@@ -23,7 +23,7 @@ function useData<T>(initial: T) {
 }
 
 function Feedback({ error, busy }: { error?: Error; busy: boolean }) {
-  return error ? <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /></div></div> : busy ? <p role="status">Loading…</p> : null;
+  return error ? <div className="notice error" role="alert"><div><p>{error.message}</p><ValidationIssues error={error} /><ApiErrorDetails error={error} /></div></div> : busy ? <p role="status">Loading…</p> : null;
 }
 
 export function PropertyPicker({ properties, value, onChange, all = false }: {

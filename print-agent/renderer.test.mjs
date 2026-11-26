@@ -35,3 +35,7 @@ test('pre-settlement bill is marked due and does not show payment details', () =
   assert.match(text, /231\.00/);
   assert.doesNotMatch(text, /Paid|Cash tendered|Change/);
 });
+test('kitchen instructions never appear on bill previews or receipts', () => {
+  const text = render({ ...job, document_type: 'BILL_PREVIEW', payload: { ...job.payload, subtotal: 280, discount: 0, tax: 14, total: 294, payments: [] } }).toString('ascii');
+  assert.doesNotMatch(text, /Less spicy|NOTE: Less spicy/);
+});

@@ -10,8 +10,12 @@ if (fs.existsSync(file)) {
     if (match && process.env[match[1]] === undefined) process.env[match[1]] = match[2];
   }
 }
-const jar = path.join(root, 'backend/target/hearth-pos-1.0.0.jar');
-if (!fs.existsSync(jar)) throw new Error('Build the backend first: Maven -f backend/pom.xml clean package');
+const jars = [
+  path.join(root, 'backend/target/hearth-pos-1.0.0.jar'),
+  path.join(root, 'backend/target/branch-email-verify/hearth-pos-1.0.0-local.jar'),
+].filter(candidate => fs.existsSync(candidate)).sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+const jar = jars[0];
+if (!jar) throw new Error('Build the backend first: Maven -f backend/pom.xml clean package');
 const child = spawn('java', ['-jar', jar], { cwd: root, env: process.env, stdio: 'inherit' });
 child.on('error', error => { console.error(error.message); process.exitCode = 1; });
 child.on('exit', code => { process.exitCode = code ?? 1; });

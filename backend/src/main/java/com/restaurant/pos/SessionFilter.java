@@ -105,6 +105,9 @@ public final class SessionFilter extends OncePerRequestFilter {
             throw new IllegalArgumentException("APP_ORIGIN must be an HTTP(S) origin.");
         }
         int port = uri.getPort() < 0 ? ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80) : uri.getPort();
-        return uri.getScheme().toLowerCase(java.util.Locale.ROOT) + "://" + uri.getHost().toLowerCase(java.util.Locale.ROOT) + ":" + port;
+        String host = uri.getHost().toLowerCase(java.util.Locale.ROOT);
+        // Vite may be opened as either localhost or 127.0.0.1 on local development machines.
+        if ("127.0.0.1".equals(host)) host = "localhost";
+        return uri.getScheme().toLowerCase(java.util.Locale.ROOT) + "://" + host + ":" + port;
     }
 }

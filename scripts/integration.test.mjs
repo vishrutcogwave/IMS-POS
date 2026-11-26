@@ -440,6 +440,11 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     assert.equal((await ok(a, '/catalog?outletId=' + outlet.id)).tables.find(row => row.id === table.id).active_order_id, order.id);
     denied(await request(a, '/orders', { outletId: outlet.id, serviceMode: 'DINE_IN', tableId: table.id, covers: 2, notes: '', customerName: '' }), [409]);
     const oldVersion = order.version;
+    const itemLine = order.items.find(line => line.menu_item_id === itemA.id);
+    order = await ok(a, `/orders/${order.id}/items/${itemLine.id}`, {
+      version: order.version, quantity: itemLine.quantity, notes: 'Extra spicy, serve cold',
+    }, 'PATCH');
+    assert.equal(order.items.find(line => line.id === itemLine.id).notes, 'Extra spicy, serve cold');
     order = await ok(a, `/orders/${order.id}/items`, { version: order.version, menuItemId: itemB.id, quantity: 1, variant: '', modifiers: [], notes: '' });
     denied(await request(a, `/orders/${order.id}/items`, { version: oldVersion, menuItemId: itemA.id, quantity: 1, variant: '', modifiers: [], notes: '' }), [409]);
     denied(await request(cashier, `/orders/${order.id}`, { version: order.version, notes: '', customerName: '', discount: 20 }, 'PATCH'), [403]);
@@ -467,6 +472,7 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
     const jobs = await ok(a, `/printing/jobs?outletId=${outlet.id}`);
     assert.equal(jobs.filter(j => j.document_type === 'KOT').length, 2);
     assert.ok(jobs.every(j => j.status === 'PENDING'));
+    assert.equal(jobs.flatMap(j => j.payload.lines).find(line => line.name === itemA.name)?.notes, 'Extra spicy, serve cold');
     denied(await request(a, `/orders/${order.id}/send`, { version: order.version }, 'POST', { 'Idempotency-Key': key }), [409]);
     denied(await request(a, `/orders/${order.id}/items/${order.items[0].id}`, { version: order.version, quantity: 5, notes: '' }, 'PATCH'), [400,409,422]);
   });
@@ -509,6 +515,7 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
       const billPreviews = previews.filter(job => job.reference_id === bill.id);
       assert.deepEqual(billPreviews.map(job => job.printer_id).sort(), [receipt.id, secondReceipt.id].sort());
       assert.ok(billPreviews.every(job => job.payload.title === 'BILL PREVIEW' && job.payload.payments.length === 0));
+      assert.ok(billPreviews.every(job => job.payload.lines.every(line => !('notes' in line))));
     }
     const tickets = (await ok(a, '/kots?outletId=' + outlet.id)).filter(ticket => ticket.order_id === order.id);
     assert.equal(tickets.length, 2);
@@ -529,6 +536,7 @@ test('Real PostgreSQL tenant isolation and restaurant lifecycle', async t => {
       job.document_type === 'BILL' && job.reference_id === first.id && !job.original_job_id);
     assert.deepEqual(receipts.map(job => job.printer_id).sort(), [receipt.id, secondReceipt.id].sort());
     assert.ok(receipts.every(job => job.payload.waiterName === 'QA Waiter' && job.payload.covers === 2));
+    assert.ok(receipts.every(job => job.payload.lines.every(line => !('notes' in line))));
     const second = await ok(a, `/bills/${order.bills[1].id}`);
     denied(await request(a, `/bills/${second.id}/cancel`, { version: second.version, reason: 'Must not cancel partly settled split' }), [409,422]);
     await ok(a, `/bills/${second.id}/settle`, { version: second.version, payments: [{ method: 'CARD', amount: Number(second.total), reference: 'receipt-card-' + suffix }] });

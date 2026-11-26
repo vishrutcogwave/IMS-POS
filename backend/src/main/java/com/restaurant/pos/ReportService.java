@@ -13,6 +13,7 @@ import static com.restaurant.pos.OperationsSupport.*;
 @Service
 public class ReportService {
     private static final int MAX_EXPORT=10000;
+    private static final int MAX_RANGE_DAYS=3660;
     private final TenantJdbc db;
     private final OperationsSupport support;
     public ReportService(TenantJdbc db,OperationsSupport support) { this.db=db; this.support=support; }
@@ -24,7 +25,7 @@ public class ReportService {
             ZoneId zone=ZoneId.of(timezone); LocalDate today=LocalDate.now(zone);
             LocalDate start=from==null || from.isBlank()?today:LocalDate.parse(from);
             LocalDate end=to==null || to.isBlank()?today:LocalDate.parse(to);
-            if(end.isBefore(start) || ChronoUnit.DAYS.between(start,end)>=366) throw new ApiException(400,"Date range must be ordered and contain at most 366 inclusive local dates");
+            if(end.isBefore(start) || ChronoUnit.DAYS.between(start,end)>=MAX_RANGE_DAYS) throw new ApiException(400,"Date range must be ordered and contain at most 3660 inclusive local dates (10 years)");
             return new Window(start,end,zone,Timestamp.from(start.atStartOfDay(zone).toInstant()),Timestamp.from(end.plusDays(1).atStartOfDay(zone).toInstant()));
         } catch(DateTimeException ex) { throw new ApiException(400,"Use valid ISO dates and a configured IANA outlet timezone"); }
     }
@@ -94,7 +95,7 @@ public class ReportService {
                     left join scope outlets on outlets.branch_id=s.branch_id
                     left join bills b on b.tenant_id=outlets.tenant_id and b.outlet_id=outlets.outlet_id
                     and b.status='PAID' and not b.non_chargeable and b.settled_at>=outlets.from_at and b.settled_at<outlets.to_at
-                    group by s.branch_id,s.branch_name
+                    group by s.branch_id,s.branch_name having count(b.id)>0
                     """ : """
                     select o.branch_id,br.name as name,count(b.id) as bill_count,
                            coalesce(sum(b.subtotal),0) as subtotal,coalesce(sum(b.discount),0) as discount,
@@ -103,7 +104,7 @@ public class ReportService {
                     join branches br on br.tenant_id=o.tenant_id and br.id=o.branch_id
                     left join bills b on b.tenant_id=s.tenant_id and b.outlet_id=s.outlet_id
                       and b.status='PAID' and not b.non_chargeable and b.settled_at>=s.from_at and b.settled_at<s.to_at
-                    group by o.branch_id,br.name
+                    group by o.branch_id,br.name having count(b.id)>0
                     """;
                 columns=List.of("branch_id","name","bill_count","subtotal","discount","tax","total"); sums=List.of("bill_count","subtotal","discount","tax","total"); order="total desc,name,branch_id";
             }
@@ -114,7 +115,7 @@ public class ReportService {
                            coalesce(sum(b.tax),0) as tax,coalesce(sum(b.total),0) as total
                     from scope s left join bills b on b.tenant_id=s.tenant_id and b.outlet_id=s.outlet_id
                     and b.status='PAID' and not b.non_chargeable and b.settled_at>=s.from_at and b.settled_at<s.to_at
-                    group by s.outlet_id,s.name
+                    group by s.outlet_id,s.name having count(b.id)>0
                     """ : """
                     select s.outlet_id,o.name,count(b.id) as bill_count,
                            coalesce(sum(b.subtotal),0) as subtotal,coalesce(sum(b.discount),0) as discount,
@@ -122,7 +123,7 @@ public class ReportService {
                     from scope s join outlets o on o.tenant_id=s.tenant_id and o.id=s.outlet_id
                     left join bills b on b.tenant_id=s.tenant_id and b.outlet_id=s.outlet_id
                     and b.status='PAID' and not b.non_chargeable and b.settled_at>=s.from_at and b.settled_at<s.to_at
-                    group by s.outlet_id,o.name
+                    group by s.outlet_id,o.name having count(b.id)>0
                     """;
                 columns=List.of("outlet_id","name","bill_count","subtotal","discount","tax","total"); sums=List.of("bill_count","subtotal","discount","tax","total"); order="total desc,name,outlet_id";
             }
@@ -163,7 +164,7 @@ public class ReportService {
                     left join bills b on b.tenant_id=s.tenant_id and b.outlet_id=s.outlet_id
                       and b.status in ('OPEN','PAID') and not b.non_chargeable
                       and coalesce(b.settled_at,b.created_at)>=s.from_at and coalesce(b.settled_at,b.created_at)<s.to_at
-                    group by o.id,o.name
+                    group by o.id,o.name having count(b.id)>0
                     """;
                 columns=List.of("outlet_id","name","bill_count","sale","tax","cgst","sgst","total","rounding","grand");
                 sums=List.of("bill_count","sale","tax","cgst","sgst","total","rounding","grand"); order="name,outlet_id";
@@ -239,6 +240,26 @@ public class ReportService {
             List<Map<String,Object>> visible=db.list("select b.id from branches b where b.tenant_id=? and b.id=? and (?='OWNER' or exists (select 1 from outlets o join user_outlets u on u.tenant_id=o.tenant_id and u.outlet_id=o.id where o.tenant_id=b.tenant_id and o.branch_id=b.id and u.user_id=?))",a.tenantId(),branch,a.role(),a.userId());
             if (visible.isEmpty()) throw new ApiException(403,"You do not have access to this branch.");
         }
+        if (from != null && to != null && from.contains("T") && to.contains("T")) {
+            try {
+                LocalDateTime start=LocalDateTime.parse(from), end=LocalDateTime.parse(to);
+                if (!end.isAfter(start)) throw new ApiException(400,"The report end time must be after its start time.");
+                String timedSql="""
+                    with scope as (
+                      select o.tenant_id,o.id as outlet_id,o.name,o.branch_id,b.name as branch_name,o.timezone as tz,
+                             (cast(? as timestamp) at time zone o.timezone) as from_at,
+                             (cast(? as timestamp) at time zone o.timezone) as to_at
+                      from outlets o join branches b on b.tenant_id=o.tenant_id and b.id=o.branch_id
+                      where o.tenant_id=? and (?::uuid is null or o.branch_id=?::uuid)
+                        and (?='OWNER' or exists (select 1 from user_outlets access where access.tenant_id=o.tenant_id and access.outlet_id=o.id and access.user_id=?))
+                    )
+                    """;
+                Object[] timedArgs={start.toString().replace('T',' '),end.toString().replace('T',' '),a.tenantId(),branch,branch,a.role(),a.userId()};
+                return new BranchScope(timedSql,timedArgs);
+            } catch(DateTimeException ex) {
+                throw new ApiException(400,"Use valid local date and time values for the branch report.");
+            }
+        }
         Window dates=window(from,to,"Asia/Calcutta");
         String sql="""
             with scope as (
@@ -286,7 +307,7 @@ public class ReportService {
         result.put("activeTables",active.get("active_tables")); result.put("activeOrders",active.get("active_orders"));
         result.put("payments",rows(branchQuery(a,branchId,"payments",from,to),200,0)); result.put("topItems",rows(branchQuery(a,branchId,"item-sales",from,to),10,0));
         result.put("topCategories",rows(branchQuery(a,branchId,"category-sales",from,to),10,0)); result.put("branches",rows(branchQuery(a,branchId,"branch-sales",from,to),10000,0));
-        result.put("daily",rows(new Query(daily.sql(),daily.args(),daily.columns(),daily.sums(),"date"),366,0)); return result;
+        result.put("daily",rows(new Query(daily.sql(),daily.args(),daily.columns(),daily.sums(),"date"),MAX_RANGE_DAYS,0)); return result;
     }
     private long count(Query query) { return ((Number)db.one("select count(*) as count from ("+query.sql()+") report_count",query.args()).get("count")).longValue(); }
     private Map<String,Object> totals(Query query,long count) {
@@ -361,6 +382,6 @@ public class ReportService {
         result.put("activeTables",active.get("active_tables")); result.put("activeOrders",active.get("active_orders"));
         result.put("payments",rows(query(a,outlet,"payments",from,to),200,0)); result.put("topItems",rows(query(a,outlet,"item-sales",from,to),10,0));
         result.put("topCategories",rows(query(a,outlet,"category-sales",from,to),10,0)); result.put("outlets",rows(query(a,outlet,"outlet-sales",from,to),10000,0));
-        result.put("daily",rows(new Query(daily.sql(),daily.args(),daily.columns(),daily.sums(),"date"),366,0)); return result;
+        result.put("daily",rows(new Query(daily.sql(),daily.args(),daily.columns(),daily.sums(),"date"),MAX_RANGE_DAYS,0)); return result;
     }
 }

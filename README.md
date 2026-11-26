@@ -76,6 +76,8 @@ For Maven on Windows, set `MAVEN_OPTS=-Djavax.net.ssl.trustStoreType=Windows-ROO
 ## Operations
 
 - Complete business receipt details and create branch/outlet access in Settings.
+- Configure day-end email recipients per branch under **Masters → Day-End Email**. Owners can enable one automatic send per branch and choose a local send time; otherwise a manual **Close Branch & Email** action lets them select a date range covering today or up to the previous three days. Each email includes all outlets in that branch, with an outlet summary and a branch-wide bill-detail CSV. This does not stop new orders. Each identical branch/date-range is sent at most once after a successful delivery. All outlets in a branch must use the same timezone for the report schedule.
+- Email delivery requires SMTP settings in the private `.env`: `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, and `MAIL_FROM`. Set `MAIL_SMTP_AUTH` and `MAIL_SMTP_STARTTLS` to match your provider. Restart the backend after changing these values. The UI reports delivery attempts and failures; the backend log contains the underlying error category.
 - Configure the outlet's service modes, payment methods, tables, category departments, menu pricing/taxes, variants/modifiers and availability.
 - Create kitchen/receipt printers and category routes; run routing preview and a hardware test.
 - Start or resume a table/takeaway/delivery/room-service order (only enabled modes appear), add lines and notes, then send to kitchen.

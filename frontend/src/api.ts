@@ -1,8 +1,11 @@
 import { pcPrinting, type ClaimedJob, type PrintResult } from './pcPrinting';
-import type { AddItem, Bill, BillGroup, Catalog, CreateOrder, Dashboard, DateRange, ID, Kot, MenuImportPreview, MenuImportRow, Order, Payment, PrintJob, Report, ReportType, RoutingPreview, Session, Settings, SetupInputs, SetupKind, Steward, Tenant } from './types';
+import type { AddItem, Bill, BillGroup, Catalog, CreateOrder, Dashboard, DateRange, DayEndEmailSetting, ID, Kot, MenuImportPreview, MenuImportRow, Order, Payment, PrintJob, Report, ReportType, RoutingPreview, Session, Settings, SetupInputs, SetupKind, Steward, Tenant } from './types';
 
 export class ApiError extends Error {
-  constructor(message: string, public status = 0, public code = 'NETWORK_ERROR', public requestId?: string, public fieldErrors: Record<string, string> = {}) { super(message); this.name = 'ApiError'; }
+  constructor(message: string, public status = 0, public code = 'NETWORK_ERROR', public requestId?: string,
+    public fieldErrors: Record<string, string> = {}, public method?: string, public path?: string) {
+    super(message); this.name = 'ApiError';
+  }
   get uncertain() { return this.status === 0 || this.status >= 500; }
 }
 let csrfToken = '';
@@ -24,7 +27,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown, extraHea
   const headers: Record<string, string> = { Accept: download ? 'text/csv' : 'application/json', ...extraHeaders };
 
   if (localPc) headers['X-Local-Print-PC'] = localPc;
-  if (serialized !== undefined) headers['Content-Type'] = 'application/json';
+  if (write) headers['Content-Type'] = 'application/json';
   if (write) {
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
     if (!pendingKeys.has(signature)) pendingKeys.set(signature, crypto.randomUUID());
@@ -32,18 +35,18 @@ async function request<T>(path: string, method = 'GET', body?: unknown, extraHea
   }
   let response: Response;
   try { response = await fetch(`/api${path}`, { method, body: serialized, headers, credentials: 'include' }); }
-  catch { throw new ApiError('The server could not be reached. A submitted action may have been accepted. Retry the same request before starting another.'); }
+  catch { throw new ApiError(`The server could not be reached for ${method} ${path}. A submitted action may have been accepted. Retry the same request before starting another.`, 0, 'NETWORK_ERROR', undefined, {}, method, path); }
   if (!response.ok) {
     if (response.status < 500) pendingKeys.delete(signature);
     const problem = await response.json().catch(() => ({})) as { message?: string; code?: string; requestId?: string; fieldErrors?: Record<string, string> };
     if (response.status === 401 && !path.startsWith('/auth/login') && !path.startsWith('/auth/onboard')) expired?.();
-    throw new ApiError(problem.message || `Request failed (${response.status}).`, response.status, problem.code, problem.requestId, problem.fieldErrors);
+    throw new ApiError(problem.message || `Request failed (${response.status}).`, response.status, problem.code, problem.requestId, problem.fieldErrors, method, path);
   }
   try {
     const value = download ? await response.blob() : response.status === 204 ? undefined : await response.json();
     pendingKeys.delete(signature);
     return value as T;
-  } catch { throw new ApiError('The response was interrupted. Retry the same request to recover its result.'); }
+  } catch { throw new ApiError(`The response for ${method} ${path} was interrupted. Retry the same request to recover its result.`, 0, 'NETWORK_ERROR', undefined, {}, method, path); }
 }
 const versionReason = (version: number, reason: string) => ({ version, reason });
 export type BranchPrintState = {
@@ -68,6 +71,8 @@ export const api = {
   business: (body: { name: string; receiptAddress: string; taxNumber: string; phone: string; receiptFooter: string }) => request<Tenant>('/settings/business', 'PATCH', body),
   saveMenuMaster: (kind: 'units' | 'taxes', body: { outletId: ID; name: string; rate?: number }, id?: ID) =>
     request<{ id: ID }>('/settings/menu-masters/' + kind + (id ? '/' + id : ''), id ? 'PUT' : 'POST', body),
+  deleteMaster: (kind: string, id: ID, outletId: ID) =>
+    request<{ ok: boolean }>(`/settings/masters/${kind}/${id}${query({ outletId })}`, 'DELETE'),
   previewMenuImport: (outletId: ID, rows: MenuImportRow[]) =>
     request<MenuImportPreview>('/settings/items/import/preview', 'POST', { outletId, rows }),
   confirmMenuImport: (outletId: ID, rows: MenuImportRow[]) =>
@@ -75,6 +80,11 @@ export const api = {
   outletPrices: (body: { outletId: ID; changes: { itemId: ID; expectedPrice?: number; price?: number; expectedAvailable?: boolean; available?: boolean }[] }) =>
     request<{ updated: number }>('/settings/items/prices', 'PUT', body),
   saveSetup: <K extends SetupKind>(kind: K, body: SetupInputs[K], id?: ID) => request<{ id?: ID; ok?: boolean }>(`/settings/${kind}${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', body),
+  deleteStructure: (kind: 'branches' | 'outlets', id: ID) => request<{ ok: boolean }>(`/settings/${kind}/${id}`, 'DELETE'),
+  saveDayEndEmailSettings: (branchId: ID, recipients: string[], scheduled: boolean, sendTime: string) =>
+    request<DayEndEmailSetting>(`/settings/branches/${branchId}/day-end-email`, 'PUT', { recipients, scheduled, sendTime }),
+  sendDayEndEmail: (branchId: ID, startAt: string, endAt: string) =>
+    request<{ status: 'SENT'; startAt: string; endAt: string; branchId: ID; branchName: string; recipients: string[] }>(`/reports/day-end/branches/${branchId}/send`, 'POST', { startAt, endAt }),
   routes: (outletId: ID, routes: { categoryId: ID; printerId: ID }[]) => request<{ ok: boolean }>('/settings/routes', 'PUT', { outletId, routes }),
   orders: (outletId: ID) => request<Order[]>(`/orders${query({ outletId, status: 'active' })}`),
   order: (id: ID) => request<Order>(`/orders/${id}`),

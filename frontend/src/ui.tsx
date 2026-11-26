@@ -54,13 +54,13 @@ export function useAction(reload?: () => void) {
   const conflict = error instanceof ApiError && error.status === 409;
   const uncertain = error instanceof ApiError && error.uncertain;
   const feedback = <>
-    {error && <div className="notice error" role="alert"><AlertCircle size={18} /><div><strong>{conflict ? 'This record has changed.' : uncertain ? 'Result not confirmed' : 'Could not complete action'}</strong><p>{error.message}</p><ValidationIssues error={error} />{error instanceof ApiError && error.requestId && <small>Request: {error.requestId}</small>}{conflict && reload && <button className="text-button" onClick={() => { setError(undefined); reload(); }}>Reload latest record before making changes</button>}{uncertain && <button className="text-button" disabled={busy} onClick={() => void last.current?.()}>Retry this exact request</button>}</div></div>}
+    {error && <div className="notice error" role="alert"><AlertCircle size={18} /><div><strong>{conflict ? 'This change conflicts with existing data.' : uncertain ? 'Result not confirmed' : 'Could not complete action'}</strong><p>{error.message}</p><ValidationIssues error={error} /><ApiErrorDetails error={error} />{conflict && reload && <button className="text-button" onClick={() => { setError(undefined); reload(); }}>Reload latest record before making changes</button>}{uncertain && <button className="text-button" disabled={busy} onClick={() => void last.current?.()}>Retry this exact request</button>}</div></div>}
     {success && <div className="notice success" role="status"><CircleCheck size={18} /><span>{success}</span><button className="icon-button" aria-label="Dismiss message" onClick={() => setSuccess('')}><X size={15} /></button></div>}
   </>;
   return { run, busy, error, feedback, blocked: busy || uncertain || (conflict && !Object.keys(error.fieldErrors).length), clear: () => { setError(undefined); setSuccess(''); } };
 }
 export function Loading({ text = 'Loading your workspace…' }: { text?: string }) { return <div className="loading" role="status"><LoaderCircle size={22} className="spin" /><span>{text}</span></div>; }
-export function LoadError({ error, retry }: { error: Error; retry: () => void }) { return <div className="notice error" role="alert"><AlertCircle size={20} /><div><strong>Unable to load</strong><p>{error.message}</p><button className="text-button" onClick={retry}>Try again</button></div></div>; }
+export function LoadError({ error, retry }: { error: Error; retry: () => void }) { return <div className="notice error" role="alert"><AlertCircle size={20} /><div><strong>Unable to load</strong><p>{error.message}</p><ApiErrorDetails error={error} /><button className="text-button" onClick={retry}>Try again</button></div></div>; }
 export function Empty({ title, text, action }: { title: string; text: string; action?: ReactNode }) { return <div className="empty"><span className="empty-icon"><UtensilsCrossed size={28} strokeWidth={1.4} /></span><h3>{title}</h3><p>{text}</p>{action}</div>; }
 export function Badge({ status, children }: { status?: string; children?: ReactNode }) { return <span className={`badge ${(status || '').toLowerCase().replaceAll('_', '-')}`}>{children || label(status || '')}</span>; }
 export function Button({ children, busy, className = '', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean }) { return <button {...props} className={`button ${className}`} disabled={props.disabled || busy}>{busy && <LoaderCircle size={16} className="spin" />}{children}</button>; }
@@ -77,6 +77,12 @@ export function ValidationIssues({ error }: { error: unknown }) {
   if (!issues.length) return null;
   return <ul className="validation-issues">{issues.map(([path, message]) =>
     <li key={path}><strong>{fieldLabel(path)}:</strong> {message}</li>)}</ul>;
+}
+export function ApiErrorDetails({ error }: { error: unknown }) {
+  if (!(error instanceof ApiError)) return null;
+  const endpoint = error.method && error.path ? `${error.method} ${error.path}` : '';
+  const status = error.status ? `HTTP ${error.status}` : 'Network error';
+  return <small>{[status, endpoint, error.requestId ? `Request ID: ${error.requestId}` : ''].filter(Boolean).join(' · ')}</small>;
 }
 export function Field({ label: title, children, hint, error, className = '' }: {
   label: string; children: ReactNode; hint?: string; error?: string; className?: string;
@@ -95,7 +101,18 @@ export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?:
 export function Refresh({ onClick, busy }: { onClick: () => void; busy?: boolean }) { return <button className="button subtle" onClick={onClick} disabled={busy}><RefreshCw size={16} className={busy ? 'spin' : ''} /><span>Refresh</span></button>; }
 export function DateFilters({ value, onChange }: { value: DateRange; onChange: (range: DateRange) => void }) {
   const [draft, setDraft] = useState(value);
-  return <form className="date-filter" onSubmit={e => { e.preventDefault(); onChange(draft); }}><Field label="From"><input type="date" required value={draft.from} max={draft.to} onChange={e => setDraft({ ...draft, from: e.target.value })} /></Field><Field label="To"><input type="date" required min={draft.from} value={draft.to} onChange={e => setDraft({ ...draft, to: e.target.value })} /></Field><Button type="submit" className="secondary">Apply <ChevronRight size={15} /></Button></form>;
+  const [issue, setIssue] = useState('');
+  useEffect(() => setDraft(value), [value.from, value.to]);
+  const change = (next: DateRange) => { setDraft(next); setIssue(''); };
+  return <form className="date-filter" onSubmit={e => {
+    e.preventDefault();
+    const start = Date.parse(`${draft.from}T00:00:00Z`);
+    const end = Date.parse(`${draft.to}T00:00:00Z`);
+    const inclusiveDays = Math.floor((end - start) / 86_400_000) + 1;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || inclusiveDays < 1) { setIssue('Choose a valid start and end date.'); return; }
+    if (inclusiveDays > 3660) { setIssue('Choose a date range of 10 years or less.'); return; }
+    setIssue(''); onChange(draft);
+  }}><Field label="From"><input type="date" required value={draft.from} max={draft.to} onChange={e => change({ ...draft, from: e.target.value })} /></Field><Field label="To"><input type="date" required min={draft.from} value={draft.to} onChange={e => change({ ...draft, to: e.target.value })} /></Field>{issue && <small className="field-error" role="alert">{issue}</small>}<Button type="submit" className="secondary">Apply <ChevronRight size={15} /></Button></form>;
 }
 let modalSequence = 0;
 export function Modal({ title, subtitle, children, onClose, wide = false, noClose = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean; noClose?: boolean }) {

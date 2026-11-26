@@ -14,6 +14,14 @@ public class CatalogController {
     public Map<String, Object> catalog(@RequestParam UUID outletId) { return catalog.catalog(Actor.current(), outletId); }
     @GetMapping("/settings")
     public Map<String, Object> settings() { return catalog.settings(Actor.current()); }
+    @DeleteMapping("/settings/masters/{kind}/{id}")
+    public Map<String, Object> deleteMaster(@PathVariable String kind, @PathVariable UUID id, @RequestParam UUID outletId) {
+        return catalog.deleteMaster(Actor.current(), kind, id, outletId);
+    }
+    @DeleteMapping("/settings/branches/{id}")
+    public Map<String, Object> deleteBranch(@PathVariable UUID id) { return catalog.deleteBranch(Actor.current(), id); }
+    @DeleteMapping("/settings/outlets/{id}")
+    public Map<String, Object> deleteOutlet(@PathVariable UUID id) { return catalog.deleteOutlet(Actor.current(), id); }
     @PatchMapping("/settings/business")
     public Map<String, Object> business(@Valid @RequestBody CatalogDtos.Business input) { return catalog.business(Actor.current(), input); }
     @PostMapping("/settings/branches")

@@ -20,6 +20,13 @@ APP_ONBOARDING_KEY=${secret()}
 APP_ORIGIN=http://localhost:5173
 APP_COOKIE_SECURE=false
 APP_DOCS_ENABLED=true
+MAIL_HOST=
+MAIL_PORT=587
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_FROM=
+MAIL_SMTP_AUTH=true
+MAIL_SMTP_STARTTLS=true
 `;
 const target = fileURLToPath(new URL('../.env', import.meta.url));
 await writeFile(target, content, { flag: 'wx', mode: 0o600 });

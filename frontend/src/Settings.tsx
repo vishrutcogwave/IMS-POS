@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Building2, ChefHat, FilePenLine, MapPin, LayoutGrid, Plus, Save, Settings2, ShieldCheck, Store, Trash2, Users, UtensilsCrossed } from 'lucide-react';
+import { Building2, ChefHat, FilePenLine, Mail, MapPin, LayoutGrid, Plus, Save, Settings2, ShieldCheck, Store, Trash2, Users, UtensilsCrossed } from 'lucide-react';
 import { api } from './api';
+import { MasterDelete } from './MasterDelete';
+import { StructureDelete } from './StructureDelete';
 import type { Branch, Category, MenuGroup, MenuItem, Outlet, Permission, PriceOption, Printer as PrinterEntity, RestaurantTable, Role, Settings, SetupEntity, SetupKind, Steward, User } from './types';
 import { Badge, Button, CheckField, Empty, Field, label, LoadError, Loading, Modal, number, PageHeader, Refresh, useAction, useLoad, useMoney, useWorkspace } from './ui';
 
 import { ItemWorkbookActions, MenuMasterPage } from './MenuMasters';
+import { DayEndEmailSettingsPage } from './DayEndEmailSettings';
 
-type SettingsTab = 'business' | 'outlets' | 'groups' | 'categories' | 'items' | 'units' | 'taxes' | 'tables' | 'team' | 'stewards' | 'nc-departments';
+type SettingsTab = 'business' | 'outlets' | 'groups' | 'categories' | 'items' | 'units' | 'taxes' | 'tables' | 'team' | 'stewards' | 'nc-departments' | 'day-end-email';
 const tabs: { id: SettingsTab; title: string; Icon: typeof Store }[] = [
   { id: 'outlets', title: 'Branches & outlets', Icon: Building2 },
   { id: 'tables', title: 'Tables', Icon: MapPin },
@@ -17,6 +20,7 @@ const tabs: { id: SettingsTab; title: string; Icon: typeof Store }[] = [
   { id: 'taxes', title: 'Taxes', Icon: FilePenLine },
   { id: 'stewards', title: 'Stewards', Icon: Users },
   { id: 'nc-departments', title: 'NC Departments', Icon: Building2 },
+  { id: 'day-end-email', title: 'Day-End Email', Icon: Mail },
   { id: 'team', title: 'Branch logins & permissions', Icon: Users },
   { id: 'business', title: 'Business', Icon: Store },
 ];
@@ -53,7 +57,7 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
     if (!edit?.entity && id && edit?.kind === 'categories') { setItemCategory(id); setTab('items'); }
   };
   if (!can('SETTINGS') || !['OWNER', 'MANAGER'].includes(session.user.role)) return <Empty title="Settings are restricted" text="Only owners and managers can manage restaurant configuration." />;
-  return <div className="page"><PageHeader title="Masters" description="Manage branches, outlets, tables, menus, and staff." actions={<Refresh onClick={state.reload} busy={state.loading} />} /><div className="settings-tabs tabs">{tabs.filter(t => t.id !== 'team' || can('USERS')).map(({ id, title, Icon }) => <button key={id} className={tab === id ? 'active' : ''} disabled={outletTabs.includes(id) && !outletId} onClick={() => setTab(id)}><Icon size={17} />{title}</button>)}</div>{state.error ? <LoadError error={state.error} retry={state.reload} /> : state.loading && !data ? <Loading /> : data && <>
+  return <div className="page"><PageHeader title="Masters" description="Manage branches, outlets, tables, menus, and staff." actions={<Refresh onClick={state.reload} busy={state.loading} />} /><div className="settings-tabs tabs">{tabs.filter(t => (t.id !== 'team' || can('USERS')) && (t.id !== 'day-end-email' || session.user.role === 'OWNER')).map(({ id, title, Icon }) => <button key={id} className={tab === id ? 'active' : ''} disabled={outletTabs.includes(id) && !outletId} onClick={() => setTab(id)}><Icon size={17} />{title}</button>)}</div>{state.error ? <LoadError error={state.error} retry={state.reload} /> : state.loading && !data ? <Loading /> : data && <>
     {outletTabs.includes(tab) && selectedOutlet && <section className="card masters-outlet">
       <Field label="Setup outlet"><select aria-label="Setup outlet" value={outletId}
         onChange={event => { onOutletChange(event.target.value); setItemCategory(''); }}>
@@ -62,7 +66,8 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
       <p className="muted">{scoped(data.tables).length} tables · {categories.length} categories · {items.length} items</p>
     </section>}
     {tab === 'business' && <BusinessForm key={data.tenant.id} data={data} onSaved={saved} />}
-    {tab === 'outlets' && <div className="settings-two-columns"><section className="card"><div className="section-heading"><div><h2>Branches</h2><p>Business locations</p></div>{session.user.role === 'OWNER' && <Button className="secondary" onClick={() => open('branches')}><Plus size={16} />Add branch</Button>}</div>{data.branches.length ? <div className="entity-list">{data.branches.map(branch => <div key={branch.id}><span className="entity-icon"><Building2 size={22} /></span><div><h3>{branch.name}</h3><p>{branch.address || 'No address provided'}</p></div><Badge>{data.outlets.filter(o => o.branch_id === branch.id).length} outlets</Badge>{session.user.role === 'OWNER' && editButton('branches', branch)}</div>)}</div> : <Empty title="No branches yet" text="Add a branch, then configure its outlets." />}</section><section className="card"><div className="section-heading"><div><h2>Service outlets</h2><p>Only accessible outlets are shown</p></div>{session.user.role === 'OWNER' && <Button onClick={() => open('outlets')} disabled={!data.branches.length}><Plus size={16} />Add outlet</Button>}</div>{data.outlets.map(outlet => <div className="outlet-setting" key={outlet.id}><div className="section-heading"><div><h3>{outlet.name}{outlet.id === outletId && <Badge>Current</Badge>}</h3><p>{data.branches.find(b => b.id === outlet.branch_id)?.name}</p></div><div className="heading-actions"><Button className="secondary" onClick={() => configureOutlet(outlet.id)}>Set up outlet</Button>{editButton('outlets', outlet)}</div></div><div className="permission-list">{outlet.service_modes?.map(m => <Badge key={m}>{label(m)}</Badge>)}</div><p className="small-text muted">{outlet.payment_methods?.map(label).join(' · ')}<br />{outlet.currency} · {outlet.timezone}</p></div>)}</section></div>}
+    {tab === 'day-end-email' && <DayEndEmailSettingsPage key={tab} branches={data.branches} outlets={data.outlets} activeBranchId={selectedOutlet?.branch_id || 'ALL'} settings={data.dayEndEmailSettings || []} deliveries={data.dayEndEmailDeliveries || []} emailConfigured={data.emailConfigured === true} onSaved={saved} />}
+    {tab === 'outlets' && <div className="settings-two-columns"><section className="card"><div className="section-heading"><div><h2>Branches</h2><p>Business locations</p></div>{session.user.role === 'OWNER' && <Button className="secondary" onClick={() => open('branches')}><Plus size={16} />Add branch</Button>}</div>{data.branches.length ? <div className="entity-list">{data.branches.map(branch => <div key={branch.id}><span className="entity-icon"><Building2 size={22} /></span><div><h3>{branch.name}</h3><p>{branch.address || 'No address provided'}</p></div><Badge>{data.outlets.filter(o => o.branch_id === branch.id).length} outlets</Badge>{session.user.role === 'OWNER' && <div className="heading-actions">{editButton('branches', branch)}<StructureDelete kind="branches" id={branch.id} name={branch.name} onDeleted={saved} /></div>}</div>)}</div> : <Empty title="No branches yet" text="Add a branch, then configure its outlets." />}</section><section className="card"><div className="section-heading"><div><h2>Service outlets</h2><p>Only accessible outlets are shown</p></div>{session.user.role === 'OWNER' && <Button onClick={() => open('outlets')} disabled={!data.branches.length}><Plus size={16} />Add outlet</Button>}</div>{data.outlets.map(outlet => <div className="outlet-setting" key={outlet.id}><div className="section-heading"><div><h3>{outlet.name}{outlet.id === outletId && <Badge>Current</Badge>}</h3><p>{data.branches.find(b => b.id === outlet.branch_id)?.name}</p></div><div className="heading-actions"><Button className="secondary" onClick={() => configureOutlet(outlet.id)}>Set up outlet</Button>{editButton('outlets', outlet)}{session.user.role === 'OWNER' && <StructureDelete kind="outlets" id={outlet.id} name={outlet.name} onDeleted={saved} />}</div></div><div className="permission-list">{outlet.service_modes?.map(m => <Badge key={m}>{label(m)}</Badge>)}</div><p className="small-text muted">{outlet.payment_methods?.map(label).join(' · ')}<br />{outlet.currency} · {outlet.timezone}</p></div>)}</section></div>}
     {tab === 'groups' && selectedOutlet && <section className="card">
       <div className="section-heading"><div><h2>Groups</h2><p>Groups for {selectedOutlet.name}</p></div>
         <Button onClick={() => open('groups')}><Plus size={16} />Add group</Button></div>
@@ -72,7 +77,7 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
           <td>{group.name}</td><td>{categories.filter(category => category.group_id === group.id).length}</td>
           <td><div className="heading-actions">
             <Button className="secondary" onClick={() => { setGroupId(group.id); setTab('categories'); }}>View categories</Button>
-            {editButton('groups', group)}
+            {editButton('groups', group)}<MasterDelete kind="groups" id={group.id} outletId={outletId} name={group.name} onDeleted={saved} />
           </div></td>
         </tr>)}</tbody>
       </table></div> : <Empty title="No groups yet" text="Add a group before creating categories." />}
@@ -91,7 +96,7 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
           <td>{items.filter(item => item.category_id === category.id).length}</td>
           <td><div className="heading-actions">
             <Button className="secondary" onClick={() => { setItemCategory(category.id); setTab('items'); }}>View items</Button>
-            {editButton('categories', category)}
+            {editButton('categories', category)}<MasterDelete kind="categories" id={category.id} outletId={outletId} name={category.name} onDeleted={saved} />
           </div></td>
         </tr>)}</tbody>
       </table></div> : <Empty title="No categories yet" text="Create your first category before adding menu items." />}
@@ -121,7 +126,7 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
               <small>{item.variants?.length || 0} variants · {item.modifiers?.length || 0} extras</small></td>
             <td>{format(item.price)}<small>{number(item.tax_rate)}% tax</small></td>
             <td><Badge status={item.available ? 'AVAILABLE' : 'DISABLED'}>{item.available ? 'Available' : 'Hidden'}</Badge></td>
-            <td>{editButton('items', item)}</td>
+            <td><div className="heading-actions">{editButton('items', item)}<MasterDelete kind="items" id={item.id} outletId={outletId} name={item.name} onDeleted={saved} /></div></td>
           </tr>)}</tbody>
         </table></div> : <Empty title="No items in this category" text="Add an item to make it available for this outlet’s menu." />}
       </> : <Empty title="Create a category first" text="Items belong to a category in the selected outlet."
@@ -129,7 +134,7 @@ export function SettingsPage({ onOutletChange }: { onOutletChange: (id: string) 
     </section>}
     {(tab === 'units' || tab === 'taxes') && selectedOutlet && <MenuMasterPage key={outletId + tab}
       kind={tab} outletId={outletId} units={scoped(data.units)} taxes={scoped(data.taxes)} onSaved={saved} />}
-    {tab === 'tables' && selectedOutlet && <section className="card"><div className="section-heading"><div><h2>Tables</h2><p>Tables for {selectedOutlet.name}</p></div><div className="heading-actions">{can('ORDER') && <Button className="secondary" onClick={() => navigate({ page: 'floor' })}>View tables</Button>}<Button onClick={() => open('tables')}><Plus size={16} />Add table</Button></div></div>{scoped(data.tables).length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Table name</th><th>Seats</th><th /></tr></thead><tbody>{scoped(data.tables).map(t => <tr key={t.id}><td><strong>{t.name}</strong></td><td>{t.seats}</td><td>{editButton('tables', t)}</td></tr>)}</tbody></table></div> : <Empty title="Give every guest a place" text="Create tables for the selected outlet." />}</section>}
+    {tab === 'tables' && selectedOutlet && <section className="card"><div className="section-heading"><div><h2>Tables</h2><p>Tables for {selectedOutlet.name}</p></div><div className="heading-actions">{can('ORDER') && <Button className="secondary" onClick={() => navigate({ page: 'floor' })}>View tables</Button>}<Button onClick={() => open('tables')}><Plus size={16} />Add table</Button></div></div>{scoped(data.tables).length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Table name</th><th>Seats</th><th /></tr></thead><tbody>{scoped(data.tables).map(t => <tr key={t.id}><td><strong>{t.name}</strong></td><td>{t.seats}</td><td><div className="heading-actions">{editButton('tables', t)}<MasterDelete kind="tables" id={t.id} outletId={outletId} name={t.name} onDeleted={saved} /></div></td></tr>)}</tbody></table></div> : <Empty title="Give every guest a place" text="Create tables for the selected outlet." />}</section>}
     {tab === 'team' && <section className="card"><div className="section-heading"><div><h2>Branch logins</h2><p>Each login has a role, one branch and explicitly assigned outlets.</p></div>{session.user.role === 'OWNER' && <Button onClick={() => open('users')}><Plus size={16} />Create branch login</Button>}</div><div className="notice info"><ShieldCheck size={20} /><span>New accounts receive an initial password that you share securely. No invitation email is sent. Editing access can revoke active sessions.</span></div>{data.users.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Team member</th><th>Role</th><th>Outlet access</th><th>Allowed actions</th><th>Status</th><th /></tr></thead><tbody>{data.users.map(u => <tr key={u.id}><td><strong>{u.name}</strong><small>{u.email}</small></td><td><Badge>{label(u.role)}</Badge></td><td>{u.role === 'OWNER' ? 'All outlets' : (u.outlet_ids || []).map(id => data.outlets.find(o => o.id === id)?.name || 'Assigned outlet').join(', ') || 'No outlets assigned'}</td><td>{(u.permitted_actions ?? data.rolePermissions[u.role]).map(label).join(', ')}</td><td><Badge status={u.active === false ? 'DISABLED' : 'AVAILABLE'}>{u.active === false ? 'Inactive' : 'Active'}</Badge></td><td>{session.user.role === 'OWNER' ? editButton('users', u) : <span className="small-text muted">Owner only</span>}</td></tr>)}</tbody></table></div> : <Empty title="No team accounts available" text="Create a team member or verify your user-management permission." />}<div className="role-guide"><h3>Clear responsibilities</h3>{Object.entries(roleDescriptions).map(([role, description]) => <div key={role}><strong>{label(role)}</strong><p>{description}</p></div>)}</div></section>}
     {(tab === 'stewards' || tab === 'nc-departments') && selectedOutlet && <NamedOutletMaster key={outletId + tab}
       kind={tab} outletId={outletId} entries={scoped(tab === 'stewards' ? data.stewards : data.ncDepartments)} onSaved={saved} />}
@@ -158,7 +163,7 @@ function NamedOutletMaster({ kind, outletId, entries, onSaved }: {
       <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>{entries.map(steward => <tr key={steward.id}><td>{steward.name}</td>
         <td><Badge status={steward.active ? 'AVAILABLE' : 'DISABLED'}>{steward.active ? 'Active' : 'Inactive'}</Badge></td>
-        <td><button className="text-button" onClick={() => open(steward)}>Edit</button></td></tr>)}</tbody>
+        <td><div className="heading-actions"><button className="text-button" onClick={() => open(steward)}>Edit</button><MasterDelete kind={kind} id={steward.id} outletId={outletId} name={steward.name} onDeleted={onSaved} /></div></td></tr>)}</tbody>
     </table></div> : <p className="muted">{kind === 'stewards' ? 'Add the stewards who can be selected when opening a table.' : 'Add a department to select it when sending an NC KOT.'}</p>}
     {editing && <Modal title={(editing === 'new' ? 'Add ' : 'Edit ') + singular} onClose={() => setEditing(null)} noClose={action.busy}>
       <form onSubmit={event => {

@@ -9,10 +9,10 @@ function wrap(value, width) {
   return lines;
 }
 function fixed(value) { return Number(value || 0).toFixed(2); }
-function indiaDate(value) {
+function indiaDate(value, timezone = 'Asia/Kolkata') {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return clean(value);
-  return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).format(date).replace(/\b(am|pm)\b/i, match => match.toUpperCase());
+  return new Intl.DateTimeFormat('en-IN', { timeZone: timezone, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).format(date).replace(/\b(am|pm)\b/i, match => match.toUpperCase());
 }
 function rupeeWords(value) {
   const small = ['Zero','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
@@ -65,7 +65,7 @@ function renderBill(job, width) {
   if (p.taxNumber) pushCenter('GSTIN: ' + p.taxNumber);
   rows.push(rule); pushCenter(canceled ? 'CANCELLED TAX INVOICE' : preview ? (isNc ? 'NC BILL - PAYMENT DUE' : 'BILL - PAYMENT DUE') : isNc ? 'NC TAX INVOICE' : 'TAX INVOICE'); rows.push(rule);
   if (p.reference) pushWrap('Bill No: ' + p.reference);
-  if (p.createdAt) pushWrap('Date: ' + indiaDate(p.createdAt));
+  if (p.createdAt) pushWrap('Date: ' + indiaDate(p.createdAt, p.timezone));
   pushWrap('Type: ' + (isNc ? 'NC Bill' : preview ? 'Unpaid Bill' : (mode ? mode + ' Bill' : 'Unpaid Bill')));
   pushWrap('Location: ' + clean(p.table || p.serviceMode || p.outlet || '-'));
   if (p.order) pushWrap('Order No: ' + p.order);
@@ -92,7 +92,6 @@ function renderBill(job, width) {
       for (const extra of nameLines.slice(1)) rows.push(tableRow(['',extra,'','','']));
       if (item.variant) pushWrap('   Variant: ' + item.variant);
       if (item.modifiers?.length) pushWrap('   + ' + item.modifiers.map(m => typeof m === 'string' ? m : m.name).join(', '));
-      if (item.notes) pushWrap('   Note: ' + item.notes);
     });
   } else {
     rows.push('No.  PARTICULARS', rule);
@@ -102,7 +101,6 @@ function renderBill(job, width) {
       pushWrap('   Amount: ' + currency + ' ' + fixed(item.total ?? item.subtotal ?? Number(item.unitPrice ?? item.unit_price) * Number(item.quantity || 0)));
       if (item.variant) pushWrap('   Variant: ' + item.variant);
       if (item.modifiers?.length) pushWrap('   + ' + item.modifiers.map(m => typeof m === 'string' ? m : m.name).join(', '));
-      if (item.notes) pushWrap('   Note: ' + item.notes);
     });
   }
   const subtotal = Number(p.subtotal || 0);
@@ -133,7 +131,7 @@ function renderKot(job, width) {
   const p = job.payload;
   const line = '-'.repeat(width);
   const rows = [clean(p.title || job.document_type), clean(p.outlet), clean(p.address), clean(p.taxNumber), line,
-    'Ref: ' + clean(p.reference), 'Order: ' + clean(p.order) + '  Table: ' + clean(p.table || '-'), clean(p.createdAt), line];
+    'Ref: ' + clean(p.reference), 'Order: ' + clean(p.order) + '  Table: ' + clean(p.table || '-'), p.createdAt ? 'Date: ' + indiaDate(p.createdAt, p.timezone) : '', line];
   if (p.waiterName) rows.push('Waiter: ' + p.waiterName);
   if (p.covers) rows.push('Pax: ' + p.covers);
   if (p.originalReference) rows.push('Original: ' + p.originalReference);

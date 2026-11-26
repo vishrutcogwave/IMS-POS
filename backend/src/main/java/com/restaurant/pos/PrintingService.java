@@ -102,6 +102,7 @@ public class PrintingService {
         return support.job(a,job,false);
     }
     Map<String,Object> payload(Actor a,Map<String,Object> order,String title,String reference,List<Map<String,Object>> lines) {
+        boolean kitchenDocument=title.toUpperCase(Locale.ROOT).contains("KOT") || "KITCHEN ORDER".equalsIgnoreCase(title);
         UUID outletId=id(order.get("outlet_id"));
         Map<String,Object> outlet=support.outlet(a,outletId);
         Map<String,Object> tenant=db.one("select name,receipt_address,tax_number,phone,receipt_footer from tenants where id=?",a.tenantId());
@@ -110,13 +111,14 @@ public class PrintingService {
         Map<String,Object> result=new LinkedHashMap<>();
         result.put("title",title); result.put("reference",reference); result.put("outlet",outlet.get("name")); result.put("businessName",tenant.get("name"));
         result.put("order",order.get("number")); result.put("table",table); result.put("serviceMode",order.get("service_mode")); result.put("customerName",order.get("customer_name"));
-        result.put("createdAt",Instant.now().toString()); result.put("address",tenant.get("receipt_address")); result.put("taxNumber",tenant.get("tax_number"));
+        result.put("createdAt",Instant.now().toString()); result.put("timezone",outlet.get("timezone")); result.put("address",tenant.get("receipt_address")); result.put("taxNumber",tenant.get("tax_number"));
         result.put("phone",tenant.get("phone")); result.put("footer",tenant.get("receipt_footer")); result.put("currency",outlet.get("currency"));
         List<Map<String,Object>> printLines=new ArrayList<>();
         for(Map<String,Object> line:lines) {
             Map<String,Object> p=new LinkedHashMap<>();
             p.put("categoryId",line.get("category_id")); p.put("name",line.get("name")); p.put("quantity",line.get("quantity")); p.put("unitPrice",line.get("unit_price"));
-            p.put("variant",line.get("variant")); p.put("modifiers",line.get("modifiers")); p.put("notes",line.get("notes"));
+            p.put("variant",line.get("variant")); p.put("modifiers",line.get("modifiers"));
+            if(kitchenDocument) p.put("notes",line.get("notes"));
             for(String key:List.of("subtotal","discount","tax","total")) if(line.containsKey(key)) p.put(key,line.get(key));
             printLines.add(p);
         }

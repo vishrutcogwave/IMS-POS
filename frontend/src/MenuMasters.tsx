@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, ApiError } from './api';
+import { MasterDelete } from './MasterDelete';
 import { exportMenuWorkbook, readMenuWorkbook } from './menuWorkbook';
 import type { Category, MenuGroup, MenuImportPreview, MenuImportRow, MenuItem, MenuTax, MenuUnit } from './types';
 import { Button, Empty, Field, Modal, number, useAction } from './ui';
@@ -19,7 +20,7 @@ export function MenuMasterPage({ kind, outletId, units, taxes, onSaved }: {
     {rows.length ? <div className="table-scroll"><table className="data-table">
       <thead><tr><th>Name</th>{kind === 'taxes' && <th>Rate</th>}<th>Actions</th></tr></thead>
       <tbody>{rows.map(row => <tr key={row.id}><td>{row.name}</td>{'rate' in row && <td>{String(row.rate)}%</td>}
-        <td><Button className="secondary" onClick={() => { action.clear(); setEdit(row); }}>Edit</Button></td></tr>)}</tbody>
+        <td><div className="heading-actions"><Button className="secondary" onClick={() => { action.clear(); setEdit(row); }}>Edit</Button><MasterDelete kind={kind} id={row.id} outletId={outletId} name={row.name} onDeleted={onSaved} /></div></td></tr>)}</tbody>
     </table></div> : <Empty title={kind === 'units' ? 'No units yet' : 'No taxes yet'} text="Add a record to use it when creating or importing items." />}
     {edit && <Modal title={(edit === 'new' ? 'Add ' : 'Edit ') + noun} onClose={() => setEdit(undefined)} noClose={action.busy}>
       <form onSubmit={event => {

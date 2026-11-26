@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -20,8 +21,11 @@ public class CatalogService {
     private final TenantJdbc db;
     private final AuthService auth;
     private final PasswordEncoder passwords;
-    public CatalogService(TenantJdbc db, AuthService auth, PasswordEncoder passwords) {
-        this.db = db; this.auth = auth; this.passwords = passwords;
+    private final DayEndEmailService dayEndEmail;
+    public CatalogService(TenantJdbc db, AuthService auth, PasswordEncoder passwords) { this(db, auth, passwords, null); }
+    @Autowired
+    public CatalogService(TenantJdbc db, AuthService auth, PasswordEncoder passwords, DayEndEmailService dayEndEmail) {
+        this.db = db; this.auth = auth; this.passwords = passwords; this.dayEndEmail = dayEndEmail;
     }
 
     public Map<String, Object> catalog(Actor actor, UUID outletId) {
@@ -70,7 +74,95 @@ public class CatalogService {
                     target.addAll(rows);
                 }
             }
+            if ("OWNER".equals(actor.role())) {
+                result.put("emailConfigured", dayEndEmail.emailConfigured());
+                result.put("platformContactEmail", db.one("select email from platform_contact where singleton").get("email"));
+                result.put("dayEndEmailSettings", db.list("""
+                        select b.id as branch_id,b.name as branch_name,coalesce(s.recipients,'[]'::jsonb) as recipients,
+                          coalesce(s.scheduled,false) as scheduled,coalesce(s.send_time,time '23:00') as send_time
+                        from branches b left join day_end_email_settings s on s.tenant_id=b.tenant_id and s.branch_id=b.id
+                        where b.tenant_id=? order by b.name,b.id
+                        """, actor.tenantId()));
+                result.put("dayEndEmailDeliveries", db.list("""
+                        select d.branch_id,b.name as branch_name,d.start_date,d.end_date,d.start_at,d.end_at,d.trigger,d.status,d.attempts,d.started_at,d.sent_at,d.last_error
+                        from day_end_email_deliveries d join branches b on b.tenant_id=d.tenant_id and b.id=d.branch_id
+                        where d.tenant_id=? order by d.start_date desc,d.end_date desc,d.started_at desc limit 30
+                        """, actor.tenantId()));
+            } else {
+                result.put("emailConfigured", false);
+                result.put("platformContactEmail", "");
+                result.put("dayEndEmailSettings", List.of());
+                result.put("dayEndEmailDeliveries", List.of());
+            }
             return result;
+        });
+    }
+
+    public Map<String, Object> deleteMaster(Actor actor, String kind, UUID id, UUID outletId) {
+        actor.require("SETTINGS");
+        return db.tx(actor, () -> {
+            db.outlet(actor, outletId);
+            String table = switch (kind) {
+                case "groups" -> "menu_groups";
+                case "categories" -> "categories";
+                case "items" -> "menu_items";
+                case "tables" -> "restaurant_tables";
+                case "units" -> "menu_units";
+                case "taxes" -> "menu_taxes";
+                case "stewards" -> "stewards";
+                case "nc-departments" -> "nc_departments";
+                default -> throw new ApiException(404, "Master not found.");
+            };
+            int removed = db.update("delete from " + table + " where tenant_id=? and outlet_id=? and id=?",
+                    actor.tenantId(), outletId, id);
+            if (removed == 0) throw new ApiException(404, "Master not found in this outlet.");
+            db.audit(actor, outletId, "MASTER_DELETE", table.toUpperCase(Locale.ROOT), id, "", Map.of());
+            return Map.of("ok", true);
+        });
+    }
+
+    public Map<String, Object> deleteBranch(Actor actor, UUID id) {
+        actor.require("SETTINGS"); owner(actor);
+        return db.tx(actor, () -> {
+            if (db.list("select id from branches where tenant_id=? and id=? for update", actor.tenantId(), id).isEmpty())
+                throw new ApiException(404, "Branch not found.");
+            if (!db.list("select id from outlets where tenant_id=? and branch_id=? limit 1", actor.tenantId(), id).isEmpty())
+                throw new ApiException(409, "Delete or move this branch's outlets before deleting the branch.");
+            if (!db.list("select 1 from branch_bill_counters where tenant_id=? and branch_id=? limit 1", actor.tenantId(), id).isEmpty()
+                    || !db.list("select 1 from print_pcs where tenant_id=? and branch_id=? limit 1", actor.tenantId(), id).isEmpty()
+                    || !db.list("select 1 from print_pc_pairings where tenant_id=? and branch_id=? limit 1", actor.tenantId(), id).isEmpty())
+                throw new ApiException(409, "This branch has billing or printer history and cannot be deleted.");
+            db.update("delete from branches where tenant_id=? and id=?", actor.tenantId(), id);
+            db.audit(actor, null, "BRANCH_DELETE", "BRANCH", id, "", Map.of());
+            return Map.of("ok", true);
+        });
+    }
+
+    public Map<String, Object> deleteOutlet(Actor actor, UUID id) {
+        actor.require("SETTINGS"); owner(actor);
+        return db.tx(actor, () -> {
+            Map<String,Object> outlet = db.one("select id from outlets where tenant_id=? and id=? for update", actor.tenantId(), id);
+            for (String table : new String[]{"orders", "kots", "bills", "print_jobs"}) {
+                if (!db.list("select 1 from " + table + " where tenant_id=? and outlet_id=? limit 1", actor.tenantId(), id).isEmpty())
+                    throw new ApiException(409, "This outlet has order, bill, kitchen, or print history and cannot be deleted.");
+            }
+            db.update("delete from category_routes where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from branch_printer_settings where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from menu_items where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from categories where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from menu_groups where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from restaurant_tables where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from printers where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from menu_units where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from menu_taxes where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from stewards where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from nc_departments where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from document_counters where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("update audit_log set outlet_id=null where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from user_outlets where tenant_id=? and outlet_id=?", actor.tenantId(), id);
+            db.update("delete from outlets where tenant_id=? and id=?", actor.tenantId(), id);
+            db.audit(actor, null, "OUTLET_DELETE", "OUTLET", id, "", outlet);
+            return Map.of("ok", true);
         });
     }
 
