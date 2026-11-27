@@ -64,6 +64,7 @@ public class BillingService {
             throw new ApiException(422,"An NC bill requires a single bill containing only items sent on NC KOTs.");
         List<List<Map<String,Object>>> groups=split(priced,request.groups());
         List<Map<String,Object>> receiptPrinters=printing.receiptPrinters(a,outlet);
+        boolean printBeforePayment=printing.autoPrint(a,outlet,"bill_before_payment");
         List<UUID> previewJobIds=new ArrayList<>();
         for(List<Map<String,Object>> group:groups) {
             boolean nc=group.stream().allMatch(line -> Boolean.TRUE.equals(line.get("non_chargeable")));
@@ -74,12 +75,13 @@ public class BillingService {
             for(String key:List.of("subtotal","discount","tax","total")) preview.put(key,totals.get(key));
             preview.put("billId",bill); preview.put("billStatus","UNPAID"); preview.put("payments",List.of());
             for(Map<String,Object> printer:receiptPrinters)
-                previewJobIds.add(id(printing.enqueue(a,outlet,id(printer),"BILL_PREVIEW",bill,null,preview)));
+                previewJobIds.add(id(printing.enqueue(a,outlet,id(printer),"BILL_PREVIEW",bill,null,preview,printBeforePayment)));
             db.audit(a,outlet,"BILL_CREATE","BILL",bill,"",Map.of("order_id",orderId,"number",number,"totals",totals));
         }
         db.update("update orders set status='BILL_PENDING',version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",a.tenantId(),outlet,orderId);
         Map<String,Object> result=orders.detail(a,orderId);
         result.put("bill_preview_print_job_ids",previewJobIds);
+        result.put("bill_preview_auto_printed",printBeforePayment);
         return result;
     }
     /** Split canonical whole-line tax/discount cents, preserving exactly the unsplit order total. */
@@ -128,6 +130,7 @@ public class BillingService {
 
         // Validate receipt routing before any settlement or payment writes.
         List<Map<String,Object>> printers=printing.receiptPrinters(a,outletId);
+        boolean printAfterSettlement=printing.autoPrint(a,outletId,"receipt_after_settlement");
         List<Map<String,Object>> lineSnapshots=items(a,bill).stream().map(i -> object(i.get("snapshot"))).toList();
         Map<String,Object> receipt=printing.payload(a,order,Boolean.TRUE.equals(bill.get("non_chargeable"))?"NC BILL":"RECEIPT",text(bill.get("number")),lineSnapshots);
         for(String key:List.of("subtotal","discount","tax","total")) receipt.put(key,bill.get(key));
@@ -135,12 +138,13 @@ public class BillingService {
         for(OperationsDtos.Payment payment:request.payments()) db.update("insert into payments(id,tenant_id,bill_id,method,amount,reference) values(?,?,?,?,?,?)",UUID.randomUUID(),a.tenantId(),billId,payment.method(),OperationsMoney.money(payment.amount()),text(payment.reference()));
         db.update("update bills set status='PAID',version=version+1,settled_at=now() where tenant_id=? and outlet_id=? and order_id=? and id=?",a.tenantId(),outletId,id(order),billId);
         var printJobs = new ArrayList<UUID>();
-        for (var printer : printers) printJobs.add(id(printing.enqueue(a,outletId,id(printer),"BILL",billId,null,receipt)));
+        for (var printer : printers) printJobs.add(id(printing.enqueue(a,outletId,id(printer),"BILL",billId,null,receipt,printAfterSettlement)));
         boolean allPaid=db.list("select id from bills where tenant_id=? and outlet_id=? and order_id=? and status='OPEN'",a.tenantId(),outletId,id(order)).isEmpty();
         db.update("update orders set status=?,version=version+1,updated_at=now() where tenant_id=? and outlet_id=? and id=?",allPaid?"SETTLED":"BILL_PENDING",a.tenantId(),outletId,id(order));
         db.audit(a,outletId,"BILL_SETTLE","BILL",billId,"",Map.of("number",bill.get("number"),"order_id",id(order),"total",bill.get("total"),"payments",request.payments(),"cash_tendered",tender,"change",change,"table_id",text(order.get("table_id"))));
         var result = detail(a,billId);
         result.put("print_job_ids",printJobs);
+        result.put("receipt_auto_printed",printAfterSettlement);
         return result;
     }
     private record PaymentAmounts(BigDecimal tender, BigDecimal change) {}
@@ -170,6 +174,7 @@ public class BillingService {
         if(!"PAID".equals(bill.get("status"))) throw new ApiException(409,"Select a paid bill to correct its recorded payment.");
         UUID outlet=id(bill.get("outlet_id"));
         PaymentAmounts amounts=validatePayments(bill,support.outlet(a,outlet),payment);
+        boolean printAfterSettlement=printing.autoPrint(a,outlet,"receipt_after_settlement");
         var printers=printing.receiptPrinters(a,outlet);
         var original=printing.currentBillReceipt(a,outlet,billId);
         var receipt=object(original.get("payload"));
@@ -184,10 +189,12 @@ public class BillingService {
         receipt.put("cashTendered",amounts.tender());
         receipt.put("change",amounts.change());
         printing.supersedePendingBillReceipts(a,outlet,billId,"Superseded by corrected payment receipt");
-        for(var printer:printers) printing.enqueue(a,outlet,id(printer),"BILL",billId,id(original),receipt);
+        for(var printer:printers) printing.enqueue(a,outlet,id(printer),"BILL",billId,id(original),receipt,printAfterSettlement);
         db.audit(a,outlet,"BILL_PAYMENT_CORRECT","BILL",billId,request.reason(),Map.of("previousPayments",previous,
                 "payments",payment.payments(),"previousReceiptJob",id(original),"cashTendered",amounts.tender(),"change",amounts.change()));
-        return detail(a,billId);
+        var result=detail(a,billId);
+        result.put("receipt_auto_printed",printAfterSettlement);
+        return result;
     }
 
     public Map<String,Object> reverse(Actor a,UUID billId,OperationsDtos.ReverseBill request) {
@@ -251,8 +258,15 @@ public class BillingService {
         return detail(a,billId);
     }
     public Map<String,Object> reprint(Actor a,UUID billId,String reason) {
+        a.require("REPRINT_BILL");
         Map<String,Object> bill=support.bill(a,billId,true);
         if(!"PAID".equals(bill.get("status"))) throw new ApiException(409,"Only a settled immutable receipt can be reprinted");
         return printing.reprint(a,id(bill.get("outlet_id")),"BILL",billId,reason);
+    }
+    public Map<String,Object> printPreview(Actor a,UUID billId,String reason) {
+        a.require("PRINT_BILL");
+        Map<String,Object> bill=support.bill(a,billId,true);
+        if(!"OPEN".equals(bill.get("status"))) throw new ApiException(409,"Only an unpaid bill can be printed as a bill preview");
+        return printing.reprint(a,id(bill.get("outlet_id")),"BILL_PREVIEW",billId,reason);
     }
 }

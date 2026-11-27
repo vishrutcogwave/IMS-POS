@@ -14,17 +14,17 @@ public class PrintingController {
     private final PrintingService printing;
     public PrintingController(TenantJdbc db,OperationsSupport scope,OperationsIdempotency keys,PrintingService printing) { this.db=db; this.scope=scope; this.keys=keys; this.printing=printing; }
     @PostMapping("/preview")
-    public Object preview(@Valid @RequestBody Preview body) { Actor a=Actor.current(); a.require("PRINT"); return db.tx(a,() -> printing.preview(a,body)); }
+    public Object preview(@Valid @RequestBody Preview body) { Actor a=Actor.current(); a.require("ORDER"); return db.tx(a,() -> printing.preview(a,body)); }
     @GetMapping("/jobs")
-    public Object jobs(@RequestParam UUID outletId) { Actor a=Actor.current(); a.require("PRINT"); return db.tx(a,() -> printing.jobs(a,outletId)); }
+    public Object jobs(@RequestParam UUID outletId) { Actor a=Actor.current(); a.require("PRINT_JOBS"); return db.tx(a,() -> printing.jobs(a,outletId)); }
     @PostMapping("/printers/{id}/test")
     public Object test(@PathVariable UUID id,@RequestHeader(value="Idempotency-Key",required=false) String key) {
-        Actor a=Actor.current(); a.require("PRINT");
+        Actor a=Actor.current(); a.require("PRINT_TEST");
         return keys.execute(a,key,"POST /printing/printers/"+id+"/test",Map.of(),true,() -> scope.printer(a,id),() -> printing.test(a,id));
     }
     @PostMapping("/jobs/{id}/retry")
     public Object retry(@PathVariable UUID id,@Valid @RequestBody Reason body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
-        Actor a=Actor.current(); a.require("PRINT");
+        Actor a=Actor.current(); a.require("PRINT_RETRY");
         return keys.execute(a,key,"POST /printing/jobs/"+id+"/retry",body,true,() -> scope.job(a,id,false),() -> printing.retry(a,id,body.reason()));
     }
     @PostMapping("/local/claim")

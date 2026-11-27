@@ -221,7 +221,8 @@ public class OrderService {
                 payload.put("reason",ncReason);
                 payload.put("notes","NC department: "+department+(text(payload.get("notes")).isBlank()?"":" | "+payload.get("notes")));
             }
-            printJobs.add(id(printing.enqueue(a,outlet,group.getKey(),"KOT",kot,null,payload)));
+            printJobs.add(id(printing.enqueue(a,outlet,group.getKey(),"KOT",kot,null,payload,
+                    printing.autoPrint(a, outlet, nonChargeable ? "nc_kot_on_send" : "kot_on_send"))));
             db.audit(a,outlet,nonChargeable?"NC_KOT_SEND":"KOT_SEND","KOT",kot,ncReason,
                     nonChargeable?Map.of("order_id",orderId,"number",number,"department",department,"departmentId",departmentId):Map.of("order_id",orderId,"number",number));
         }
@@ -368,6 +369,7 @@ public class OrderService {
     }
     public Map<String,Object> reprintKot(Actor a,UUID kotId,String reason) {
         Map<String,Object> kot=support.kot(a,kotId,true);
+        a.require(kot.get("nc_department_id") == null ? "REPRINT_KOT" : "REPRINT_NC_KOT");
         if("CANCELLED".equals(kot.get("status"))) throw new ApiException(409,"Cancelled KOTs cannot be reissued as kitchen orders; retry the cancellation job if needed");
         return printing.reprint(a,id(kot.get("outlet_id")),"KOT",kotId,reason);
     }

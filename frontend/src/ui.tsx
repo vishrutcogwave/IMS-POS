@@ -4,7 +4,7 @@ import { AlertCircle, ArrowLeft, Check, ChevronRight, CircleCheck, LoaderCircle,
 import { ApiError } from './api';
 import type { Amount, DateRange, OrderItem, Outlet, Permission, Session } from './types';
 
-export type Page = 'dashboard' | 'floor' | 'pos' | 'utility' | 'bills' | 'reports' | 'settings' | 'printing' | 'profile';
+export type Page = 'dashboard' | 'floor' | 'pos' | 'utility' | 'bills' | 'kitchen' | 'reports' | 'settings' | 'printing' | 'profile';
 export interface Navigation { page: Page; orderId?: string; tableId?: string; billId?: string }
 export interface Workspace { session: Session; outletId: string; outlet?: Outlet; branchId: string; branchName: string; allBranches: boolean; can: (permission: Permission) => boolean; selectOutlet: (id: string) => void; navigate: (to: Navigation) => void; refreshSession: () => Promise<void>; signedOut: (message?: string) => void }
 export const WorkspaceContext = createContext<Workspace | null>(null);

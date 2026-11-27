@@ -31,8 +31,10 @@ class FoundationTest {
     @AfterEach void clearIdentity() { SecurityContextHolder.clearContext(); }
 
     @Test void rolesAreExplicitAndUnknownRolesFailClosed() {
-        assertEquals(11, actor("OWNER").permissions().size());
-        assertEquals(11, actor("MANAGER").permissions().size());
+        assertEquals(18, actor("OWNER").permissions().size());
+        assertEquals(18, actor("MANAGER").permissions().size());
+        assertTrue(actor("OWNER").can("PRINT_BILL"));
+        assertTrue(actor("OWNER").can("REPRINT_NC_KOT"));
         assertTrue(actor("WAITER").can("TRANSFER"));
         assertFalse(actor("CASHIER").can("CANCEL"));
         assertFalse(actor("KITCHEN").can("ORDER"));

@@ -68,7 +68,12 @@ public class OperationsController {
         return keys.execute(a,key,"POST /orders/"+id+"/bills",body,true,() -> scope.order(a,id,false),() -> bills.create(a,id,body));
     }
     @GetMapping("/kots")
-    public Object kots(@RequestParam UUID outletId) { Actor a=Actor.current(); a.require("KITCHEN"); return db.tx(a,() -> orders.kots(a,outletId)); }
+    public Object kots(@RequestParam UUID outletId) {
+        Actor a=Actor.current();
+        if (!a.can("KITCHEN") && !a.can("REPRINT_KOT") && !a.can("REPRINT_NC_KOT")) a.require("KITCHEN");
+        return db.tx(a,() -> orders.kots(a,outletId)).stream().filter(kot -> a.can("KITCHEN") ||
+                (kot.get("nc_department_id") == null ? a.can("REPRINT_KOT") : a.can("REPRINT_NC_KOT"))).toList();
+    }
     @PostMapping("/kots/{id}/status")
     public Object kotStatus(@PathVariable UUID id,@Valid @RequestBody KotStatus body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
         Actor a=Actor.current(); a.require("KITCHEN");
@@ -86,7 +91,7 @@ public class OperationsController {
     }
     @PostMapping("/kots/{id}/reprint")
     public Object reprintKot(@PathVariable UUID id,@Valid @RequestBody Reason body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
-        Actor a=Actor.current(); a.require("PRINT");
+        Actor a=Actor.current();
         return keys.execute(a,key,"POST /kots/"+id+"/reprint",body,true,() -> scope.kot(a,id,false),() -> orders.reprintKot(a,id,body.reason()));
     }
     @GetMapping("/bills")
@@ -121,7 +126,12 @@ public class OperationsController {
     }
     @PostMapping("/bills/{id}/reprint")
     public Object reprintBill(@PathVariable UUID id,@Valid @RequestBody Reason body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
-        Actor a=Actor.current(); a.require("PRINT");
+        Actor a=Actor.current(); a.require("REPRINT_BILL");
         return keys.execute(a,key,"POST /bills/"+id+"/reprint",body,true,() -> scope.bill(a,id,false),() -> bills.reprint(a,id,body.reason()));
+    }
+    @PostMapping("/bills/{id}/print-preview")
+    public Object printBillPreview(@PathVariable UUID id,@Valid @RequestBody Reason body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
+        Actor a=Actor.current(); a.require("PRINT_BILL");
+        return keys.execute(a,key,"POST /bills/"+id+"/print-preview",body,true,() -> scope.bill(a,id,false),() -> bills.printPreview(a,id,body.reason()));
     }
 }

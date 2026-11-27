@@ -11,6 +11,14 @@ public class PrintingService {
     private final OperationsSupport support;
     public PrintingService(TenantJdbc db,OperationsSupport support) { this.db=db; this.support=support; }
 
+    Map<String,Object> policy(Actor actor, UUID outlet) {
+        List<Map<String,Object>> rows = db.list("select p.kot_on_send,p.nc_kot_on_send,p.bill_before_payment,p.receipt_after_settlement from outlets o join branch_print_policies p on p.tenant_id=o.tenant_id and p.branch_id=o.branch_id where o.tenant_id=? and o.id=?",
+                actor.tenantId(), outlet);
+        return rows.isEmpty() ? Map.of("kot_on_send", true, "nc_kot_on_send", true,
+                "bill_before_payment", true, "receipt_after_settlement", true) : rows.getFirst();
+    }
+    boolean autoPrint(Actor actor, UUID outlet, String key) { return Boolean.TRUE.equals(policy(actor, outlet).get(key)); }
+
     private String printPc(Actor actor, UUID outlet) {
         var request = org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
         if (request instanceof org.springframework.web.context.request.ServletRequestAttributes servlet) {
@@ -82,6 +90,9 @@ public class PrintingService {
             throw new ApiException(422,"Printer device key must be a local device alias");
     }
     Map<String,Object> enqueue(Actor a,UUID outlet,UUID printerId,String type,UUID reference,UUID original,Object payload) {
+        return enqueue(a,outlet,printerId,type,reference,original,payload,true);
+    }
+    Map<String,Object> enqueue(Actor a,UUID outlet,UUID printerId,String type,UUID reference,UUID original,Object payload,boolean automaticEnabled) {
         db.outlet(a,outlet);
         Map<String,Object> printer=db.one("select * from printers where tenant_id=? and outlet_id=? and id=?",a.tenantId(),outlet,printerId);
         validateAlias(printer);
@@ -89,15 +100,17 @@ public class PrintingService {
         UUID job=UUID.randomUUID();
         var target = designatedPc(a,outlet);
         if (target == null) {
-            db.update("insert into print_jobs(id,tenant_id,outlet_id,printer_id,document_type,reference_id,original_job_id,payload) values(?,?,?,?,?,?,?,?::jsonb)",
-                    job,a.tenantId(),outlet,printerId,type,reference,original,db.json(payload));
+            db.update("insert into print_jobs(id,tenant_id,outlet_id,printer_id,document_type,reference_id,original_job_id,payload,status,error,completed_at) values(?,?,?,?,?,?,?,?::jsonb,?,?,?)",
+                    job,a.tenantId(),outlet,printerId,type,reference,original,db.json(payload),automaticEnabled?"PENDING":"SUPPRESSED",
+                    automaticEnabled?"":"Automatic printing is disabled by this outlet's print settings.",automaticEnabled?null:java.sql.Timestamp.from(Instant.now()));
         } else {
             db.update("""
                     insert into print_jobs(id,tenant_id,outlet_id,printer_id,document_type,reference_id,original_job_id,payload,
-                        target_branch_id,target_pc_id,expires_at)
-                    values(?,?,?,?,?,?,?,?::jsonb,?,?,now()+(? * interval '1 minute'))
+                        target_branch_id,target_pc_id,expires_at,status,error,completed_at)
+                    values(?,?,?,?,?,?,?,?::jsonb,?,?,now()+(? * interval '1 minute'),?,?,?)
                     """,job,a.tenantId(),outlet,printerId,type,reference,original,db.json(payload),
-                    id(target.get("branch_id")),id(target),type.startsWith("KOT")?20:1440);
+                    id(target.get("branch_id")),id(target),type.startsWith("KOT")?20:1440,automaticEnabled?"PENDING":"SUPPRESSED",
+                    automaticEnabled?"":"Automatic printing is disabled by this outlet's print settings.",automaticEnabled?null:java.sql.Timestamp.from(Instant.now()));
         }
         return support.job(a,job,false);
     }

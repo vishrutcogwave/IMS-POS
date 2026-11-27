@@ -21,11 +21,13 @@ public final class CatalogDtos {
             @NotBlank @Email @Size(max=254) String email,
             @NotBlank @Size(min=12,max=72) String password,
             @NotNull @Pattern(regexp="OWNER|MANAGER|CASHIER|WAITER|KITCHEN|ACCOUNTANT") String role,
-            @NotNull @Size(max=100) List<@NotNull UUID> outletIds, @Size(min=1,max=11) List<@NotBlank String> permissions) {}
+            @NotNull @Size(max=100) List<@NotNull UUID> outletIds, @Size(min=1,max=18) List<@NotBlank String> permissions) {}
     public record UpdateUser(@NotBlank @Size(max=120) String name,
             @NotBlank @Email @Size(max=254) String email,
             @NotNull @Pattern(regexp="OWNER|MANAGER|CASHIER|WAITER|KITCHEN|ACCOUNTANT") String role,
-            @NotNull @Size(max=100) List<@NotNull UUID> outletIds, @NotNull Boolean active, @Size(min=1,max=11) List<@NotBlank String> permissions) {}
+            @NotNull @Size(max=100) List<@NotNull UUID> outletIds, @NotNull Boolean active, @Size(min=1,max=18) List<@NotBlank String> permissions) {}
+    public record PrintPolicy(@NotNull Boolean kotOnSend, @NotNull Boolean ncKotOnSend,
+            @NotNull Boolean billBeforePayment, @NotNull Boolean receiptAfterSettlement) {}
     public record Group(@NotNull UUID outletId, @NotBlank @Size(max=100) String name) {}
     public record Category(@NotNull UUID outletId, @NotBlank @Size(max=100) String name,
             @NotBlank @Size(max=100) String department, @NotNull @Min(-10000) @Max(10000) Integer sortOrder, UUID groupId) {

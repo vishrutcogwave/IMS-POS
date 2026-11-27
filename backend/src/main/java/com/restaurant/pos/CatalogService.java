@@ -59,6 +59,13 @@ public class CatalogService {
             result.put("tenant", db.one("select id,slug,name,receipt_address,tax_number,phone,receipt_footer from tenants where id=?", actor.tenantId()));
             result.put("branches", db.list("select b.* from branches b where b.tenant_id=? and (?='OWNER' or exists (select 1 from outlets o join user_outlets u on u.tenant_id=o.tenant_id and u.outlet_id=o.id and u.user_id=? where o.tenant_id=b.tenant_id and o.branch_id=b.id)) order by b.name", actor.tenantId(), actor.role(), actor.userId()));
             result.put("outlets", outlets);
+            result.put("branchPrintPolicies", db.list("""
+                    select p.branch_id,p.kot_on_send,p.nc_kot_on_send,p.bill_before_payment,p.receipt_after_settlement
+                    from branch_print_policies p
+                    where p.tenant_id=? and (?='OWNER' or exists (
+                      select 1 from outlets o join user_outlets u on u.tenant_id=o.tenant_id and u.outlet_id=o.id
+                      where o.tenant_id=p.tenant_id and o.branch_id=p.branch_id and u.user_id=?))
+                    """, actor.tenantId(), actor.role(), actor.userId()));
             result.put("users", visibleUsers(actor));
             Map<String, List<String>> rolePermissions = new LinkedHashMap<>();
             for (String role : List.of("OWNER", "MANAGER", "CASHIER", "WAITER", "KITCHEN", "ACCOUNTANT")) {
@@ -95,6 +102,33 @@ public class CatalogService {
                 result.put("dayEndEmailDeliveries", List.of());
             }
             return result;
+        });
+    }
+
+    public Map<String,Object> printPolicy(Actor actor, UUID branchId, CatalogDtos.PrintPolicy input) {
+        actor.require("SETTINGS");
+        return db.tx(actor, () -> {
+            db.one("select id from branches where tenant_id=? and id=?", actor.tenantId(), branchId);
+            if (!"OWNER".equals(actor.role()) && !db.list("""
+                    select o.id from outlets o
+                    where o.tenant_id=? and o.branch_id=? and not exists (
+                      select 1 from user_outlets u where u.tenant_id=o.tenant_id and u.outlet_id=o.id and u.user_id=?)
+                    limit 1
+                    """, actor.tenantId(), branchId, actor.userId()).isEmpty()) {
+                throw new ApiException(403, "Branch-wide print settings require access to every outlet in the branch.");
+            }
+            db.update("""
+                    insert into branch_print_policies(tenant_id,branch_id,kot_on_send,nc_kot_on_send,bill_before_payment,receipt_after_settlement,updated_at)
+                    values(?,?,?,?,?,?,now())
+                    on conflict(tenant_id,branch_id) do update set kot_on_send=excluded.kot_on_send,
+                      nc_kot_on_send=excluded.nc_kot_on_send,bill_before_payment=excluded.bill_before_payment,
+                      receipt_after_settlement=excluded.receipt_after_settlement,updated_at=now()
+                    """, actor.tenantId(), branchId, input.kotOnSend(), input.ncKotOnSend(), input.billBeforePayment(), input.receiptAfterSettlement());
+            db.audit(actor, null, "PRINT_POLICY_UPDATE", "BRANCH", branchId, "", Map.of(
+                    "kotOnSend", input.kotOnSend(), "ncKotOnSend", input.ncKotOnSend(),
+                    "billBeforePayment", input.billBeforePayment(), "receiptAfterSettlement", input.receiptAfterSettlement()));
+            return db.one("select branch_id,kot_on_send,nc_kot_on_send,bill_before_payment,receipt_after_settlement from branch_print_policies where tenant_id=? and branch_id=?",
+                    actor.tenantId(), branchId);
         });
     }
 

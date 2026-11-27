@@ -34,6 +34,10 @@ public class CatalogController {
     public Map<String, Object> createOutlet(@Valid @RequestBody CatalogDtos.Outlet input) { return catalog.outlet(Actor.current(), null, input); }
     @PutMapping("/settings/outlets/{id}")
     public Map<String, Object> updateOutlet(@PathVariable UUID id, @Valid @RequestBody CatalogDtos.Outlet input) { return catalog.outlet(Actor.current(), id, input); }
+    @PutMapping("/settings/branches/{id}/print-policy")
+    public Map<String, Object> printPolicy(@PathVariable UUID id, @Valid @RequestBody CatalogDtos.PrintPolicy input) {
+        return catalog.printPolicy(Actor.current(), id, input);
+    }
     @PostMapping("/settings/users")
     public Map<String, Object> createUser(@Valid @RequestBody CatalogDtos.CreateUser input) { return catalog.createUser(Actor.current(), input); }
     @PutMapping("/settings/users/{id}")

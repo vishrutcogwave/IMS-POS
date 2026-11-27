@@ -1,7 +1,7 @@
 import { dispatchPcPrint, pcBridgeReady, pcPrinting } from './pcPrinting';
 import { Component, useEffect, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
-import { ArrowRight, BellRing, ChartNoAxesCombined, ChevronDown, ChevronRight, CircleHelp, LayoutDashboard, LayoutGrid, LogOut, Menu, PanelLeftClose, Printer, ReceiptText, Search, Settings2, Store, UserRound, X } from 'lucide-react';
+import { ArrowRight, BellRing, ChartNoAxesCombined, ChefHat, ChevronDown, ChevronRight, CircleHelp, LayoutDashboard, LayoutGrid, LogOut, Menu, PanelLeftClose, Printer, ReceiptText, Search, Settings2, Store, UserRound, X } from 'lucide-react';
 import { api, ApiError, clearSession, configureSession, type BranchPrintState } from './api';
 import { Auth, Profile } from './Auth';
 import { Brand, brandTitle } from './Brand';
@@ -9,7 +9,7 @@ import Platform from './Platform';
 import { DashboardPage, TablesPage, ReportsPage } from './Overview';
 import { POSPage } from './POS';
 import { BillsPage } from './Bills';
-import { PrintingPage } from './Operations';
+import { KitchenPage, PrintingPage } from './Operations';
 import { SettingsPage } from './Settings';
 import { PrintUtilityPage } from './PcPrintSetup';
 import type { Permission, Session } from './types';
@@ -22,6 +22,7 @@ const navigation: { page: Page; title: string; permission?: Permission; Icon: ty
 
 
   { page: 'bills', title: 'Bills', permission: 'BILL', Icon: ReceiptText, group: 'WORKSPACE' },
+  { page: 'kitchen', title: 'Kitchen & KOTs', permission: 'KITCHEN', Icon: ChefHat, group: 'WORKSPACE' },
   { page: 'reports', title: 'Reports', permission: 'REPORT', Icon: ChartNoAxesCombined, group: 'MANAGEMENT' },
   { page: 'settings', title: 'Masters', permission: 'SETTINGS', Icon: Settings2, group: 'MANAGEMENT' },
   { page: 'utility', title: 'Utility Settings', Icon: Printer, group: 'MANAGEMENT' },
@@ -96,7 +97,7 @@ export default function App() {
   if (platformToken) return <Platform token={platformToken} onSignOut={() => { updatePlatformToken(''); setMessage('You have signed out.'); }} />;
   if (!session) return <Auth onSession={acceptSession} onPlatformSession={updatePlatformToken} message={message} />;
   const can = (permission: Permission) => session.user.permissions.includes(permission);
-  const allowed = navigation.filter(n => (!n.permission || can(n.permission)) && (n.page !== 'settings' || ['OWNER', 'MANAGER'].includes(session.user.role)));
+  const allowed = navigation.filter(n => (n.page === 'kitchen' ? can('KITCHEN') || can('REPRINT_KOT') || can('REPRINT_NC_KOT') : !n.permission || can(n.permission)) && (n.page !== 'settings' || ['OWNER', 'MANAGER'].includes(session.user.role)));
   const page = location.page === 'profile' || (location.page === 'pos' && can('ORDER') && !!(location.orderId || location.tableId)) || allowed.some(n => n.page === location.page) ? location.page : allowed[0]?.page || 'profile';
   const current = navigation.find(n => n.page === (page === 'pos' ? 'floor' : page)); const outlet = session.outlets.find(o => o.id === outletId); const branches = (session.branches?.length ? session.branches.map(branch => [branch.id, branch.name] as const) : [...new Map(session.outlets.map(o => [o.branch_id, o.branch_name || o.branch_id] as const)).entries()]); const allBranches = branchId === 'ALL' && session.user.role === 'OWNER'; const selectedBranchId = allBranches ? 'ALL' : branchId; const branchName = allBranches ? 'All branches' : branches.find(([id]) => id === branchId)?.[1] || 'Select branch';
   const navigate = (to: Navigation) => { setLocation(to); setMobileNav(false); setSearchOpen(false); };
@@ -113,6 +114,7 @@ export default function App() {
       case 'pos': return <POSPage key={`${outletId}-${location.orderId || ''}-${location.tableId || ''}`} initialOrderId={location.orderId} initialTableId={location.tableId} />;
 
       case 'bills': return <BillsPage initialBillId={location.billId} />;
+      case 'kitchen': return <KitchenPage />;
       case 'reports': return <ReportsPage />;
       case 'printing': return <PrintingPage />;
     }

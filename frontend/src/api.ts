@@ -1,5 +1,5 @@
 import { pcPrinting, type ClaimedJob, type PrintResult } from './pcPrinting';
-import type { AddItem, Bill, BillGroup, Catalog, CreateOrder, Dashboard, DateRange, DayEndEmailSetting, ID, Kot, MenuImportPreview, MenuImportRow, Order, Payment, PrintJob, Report, ReportType, RoutingPreview, Session, Settings, SetupInputs, SetupKind, Steward, Tenant } from './types';
+import type { AddItem, Bill, BillGroup, Catalog, CreateOrder, Dashboard, DateRange, DayEndEmailSetting, ID, Kot, MenuImportPreview, MenuImportRow, Order, Payment, PrintJob, PrintPolicy, Report, ReportType, RoutingPreview, Session, Settings, SetupInputs, SetupKind, Steward, Tenant } from './types';
 
 export class ApiError extends Error {
   constructor(message: string, public status = 0, public code = 'NETWORK_ERROR', public requestId?: string,
@@ -80,6 +80,11 @@ export const api = {
   outletPrices: (body: { outletId: ID; changes: { itemId: ID; expectedPrice?: number; price?: number; expectedAvailable?: boolean; available?: boolean }[] }) =>
     request<{ updated: number }>('/settings/items/prices', 'PUT', body),
   saveSetup: <K extends SetupKind>(kind: K, body: SetupInputs[K], id?: ID) => request<{ id?: ID; ok?: boolean }>(`/settings/${kind}${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', body),
+  savePrintPolicy: (branchId: ID, policy: Omit<PrintPolicy, 'branch_id'>) =>
+    request<PrintPolicy>(`/settings/branches/${branchId}/print-policy`, 'PUT', {
+      kotOnSend: policy.kot_on_send, ncKotOnSend: policy.nc_kot_on_send,
+      billBeforePayment: policy.bill_before_payment, receiptAfterSettlement: policy.receipt_after_settlement,
+    }),
   deleteStructure: (kind: 'branches' | 'outlets', id: ID) => request<{ ok: boolean }>(`/settings/${kind}/${id}`, 'DELETE'),
   saveDayEndEmailSettings: (branchId: ID, recipients: string[], scheduled: boolean, sendTime: string) =>
     request<DayEndEmailSetting>(`/settings/branches/${branchId}/day-end-email`, 'PUT', { recipients, scheduled, sendTime }),
@@ -114,6 +119,7 @@ export const api = {
   cancelBill: (id: ID, version: number, reason: string) => request<Bill>(`/bills/${id}/cancel`, 'POST', versionReason(version, reason)),
   modifyBill: (id: ID, version: number, reason: string, discount: number) => request<Bill>(`/bills/${id}/modify`, 'POST', { version, reason, discount }),
   reprintBill: (id: ID, reason: string) => request<PrintJob>(`/bills/${id}/reprint`, 'POST', { reason }),
+  printBillPreview: (id: ID, reason: string) => request<PrintJob>(`/bills/${id}/print-preview`, 'POST', { reason }),
   claimLocalPrint: (outletId: ID) => request<{ jobs: ClaimedJob[] }>(`/printing/local/claim${query({ outletId })}`, 'POST', {}),
   acknowledgeLocalPrint: (id: ID, claimToken: string, result: PrintResult) =>
     request<unknown>(`/printing/jobs/${id}/ack`, 'POST', { claimToken, status: result.status, error: result.status === 'PRINTED' ? '' : result.message }),

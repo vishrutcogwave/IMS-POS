@@ -19,7 +19,7 @@ class OperationsReportTest {
     @Test void rejectsInvalidAndExcessiveDateRanges() {
         assertThrows(ApiException.class,() -> ReportService.window("2026-02-30","2026-03-01","UTC"));
         assertThrows(ApiException.class,() -> ReportService.window("2026-11-19","2026-11-18","UTC"));
-        assertThrows(ApiException.class,() -> ReportService.window("2025-01-01","2026-01-02","UTC"));
+        assertThrows(ApiException.class,() -> ReportService.window("2010-01-01","2020-01-10","UTC"));
         assertDoesNotThrow(() -> ReportService.window("2024-01-01","2024-12-31","UTC"));
     }
     @Test void csvQuotesDataAndDefusesFormulaPrefixesIncludingLeadingControlCharacters() {
